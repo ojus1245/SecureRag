@@ -1,0 +1,225 @@
+@"
+# ============================================
+# Environment & Secrets
+# ============================================
+.env
+.env.local
+.env.development
+.env.production
+*.env
+!.env.example
+
+# ============================================
+# Node.js / Backend
+# ============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+.npm/
+.npmrc
+node_modules/.cache/
+.nodemonignore
+
+# ============================================
+# Python / AI Service
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+env/
+ENV/
+.python-version
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ============================================
+# React / Frontend
+# ============================================
+frontend/dist/
+frontend/build/
+frontend/.vite/
+frontend/node_modules/
+frontend/.env
+frontend/.env.local
+
+# ============================================
+# Logs
+# ============================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+*.log.*
+
+# ============================================
+# Database
+# ============================================
+*.sqlite
+*.sqlite3
+*.db
+database/data/
+mongodb_data/
+postgres_data/
+
+# ============================================
+# Uploads & Temp Files
+# ============================================
+uploads/
+backend/uploads/*
+!backend/uploads/.gitkeep
+temp/
+tmp/
+*.tmp
+*.bak
+*.swp
+*~
+
+# ============================================
+# IDE & Editor Files
+# ============================================
+.vscode/
+.idea/
+*.iml
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+
+# ============================================
+# OS Files
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ============================================
+# AI Models (large files)
+# ============================================
+models/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.h5
+*.onnx
+*.pkl
+*.joblib
+*.gguf
+*.ggml
+
+# ============================================
+# Vector Stores / Embeddings Cache
+# ============================================
+ai-service/data/
+ai-service/vector_store/
+ai-service/cache/
+.embeddings_cache/
+faiss_index/
+chroma_db/
+
+# ============================================
+# Docker
+# ============================================
+docker-compose.override.yml
+.dockerignore
+
+# ============================================
+# Test & Coverage
+# ============================================
+coverage/
+.nyc_output/
+*.cover
+.coverage.*
+nosetests.xml
+coverage.xml
+*.py,cover
+.hypothesis/
+pytestdebug.log
+
+# ============================================
+# Build Artifacts
+# ============================================
+dist/
+build/
+out/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# ============================================
+# Package Manager
+# ============================================
+.pnp.*
+.pnp.js
+.yarn/*
+!.yarn/patches
+!.yarn/releases
+!.yarn/plugins
+!.yarn/versions
+
+# ============================================
+# Misc
+# ============================================
+.eslintcache
+.cache/
+.parcel-cache/
+*.tgz
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# ============================================
+# Local Config (keep, but exclude secrets)
+# ============================================
+config/secrets/
+config/local/
+*.pem
+*.key
+*.crt
+*.cert
+secrets/

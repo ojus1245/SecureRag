@@ -1,0 +1,274 @@
+# ============================================
+# Secure Enterprise RAG Knowledge Base
+# Docker Compose — Full Stack Orchestration
+# ============================================
+#
+# Usage:
+#   docker-compose up -d                   # Start all services
+#   docker-compose up -d --build           # Rebuild and start
+#   docker-compose logs -f backend         # Follow backend logs
+#   docker-compose down -v                 # Stop and remove volumes
+#
+# Profiles:
+#   docker-compose --profile monitoring up  # Include monitoring stack
+# ============================================
+services:
+  # ─────────────────────────────────────────
+  # Frontend — React + Nginx
+  # ─────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        VITE_API_URL: ${REACT_APP_API_URL:-/api}
+        VITE_APP_VERSION: ${APP_VERSION:-1.0.0}
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-/api}
+        REACT_APP_VERSION: ${APP_VERSION:-1.0.0}
+    container_name: rag-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - rag-network
+    environment:
+      - NODE_ENV=production
+
+  # ─────────────────────────────────────────
+  # Backend — Node.js Express API
+  # ─────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: rag-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-5000}:5000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - rag-network
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=5000
+      - HOST=0.0.0.0
+      - MONGODB_URI=mongodb://${MONGO_USERNAME:-raguser}:${MONGO_PASSWORD:-ragpassword}@mongodb:27017/${MONGO_DB:-secure_rag}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-ragredis}@redis:6379
+      - REDIS_ENABLED=true
+      - JWT_SECRET=${JWT_SECRET:-change-this-jwt-secret-in-production}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-24h}
+      - JWT_REFRESH_EXPIRES_IN=${JWT_REFRESH_EXPIRES_IN:-7d}
+      - AI_SERVICE_URL=http://ai-service:8000
+      - AI_SERVICE_API_KEY=${AI_SERVICE_API_KEY:-ai-service-key}
+      - ENCRYPTION_ALGORITHM=${ENCRYPTION_ALGORITHM:-aes-256-gcm}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
+      - ENABLE_RATE_LIMITING=${ENABLE_RATE_LIMITING:-true}
+      - ENABLE_AUDIT_LOGGING=${ENABLE_AUDIT_LOGGING:-true}
+      - ENABLE_CACHING=${ENABLE_CACHING:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - backend-uploads:/app/uploads
+      - backend-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ─────────────────────────────────────────
+  # AI Service — Python FastAPI + ML
+  # ─────────────────────────────────────────
+  ai-service:
+    build:
+      context: .
+      dockerfile: docker/ai.Dockerfile
+    container_name: rag-ai-service
+    restart: unless-stopped
+    ports:
+      - "${AI_SERVICE_PORT:-8000}:8000"
+    depends_on:
+      ollama:
+        condition: service_started
+    networks:
+      - rag-network
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama2}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-384}
+      - SAFETY_MODEL_CONFIG=/app/models/safety-classifier/config.json
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-encryption-key}
+      - LOG_LEVEL=${AI_LOG_LEVEL:-info}
+      - WORKERS=${AI_WORKERS:-2}
+    volumes:
+      - ai-model-cache:/app/models/cache
+      - ai-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+  # ─────────────────────────────────────────
+  # MongoDB — Primary Database
+  # ─────────────────────────────────────────
+  mongodb:
+    image: mongo:7.0
+    container_name: rag-mongodb
+    restart: unless-stopped
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    networks:
+      - rag-network
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USERNAME:-raguser}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:-ragpassword}
+      - MONGO_INITDB_DATABASE=${MONGO_DB:-secure_rag}
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    command: >
+      mongod
+        --auth
+        --bind_ip_all
+        --wiredTigerCacheSizeGB 1
+
+  # ─────────────────────────────────────────
+  # PostgreSQL — Structured Data & Migrations
+  # ─────────────────────────────────────────
+  postgres:
+    build:
+      context: .
+      dockerfile: docker/postgres.Dockerfile
+    container_name: rag-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - rag-network
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-raguser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ragpassword}
+      - POSTGRES_DB=${POSTGRES_DB:-secure_rag}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-raguser} -d ${POSTGRES_DB:-secure_rag}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ─────────────────────────────────────────
+  # Redis — Caching & Session Store
+  # ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rag-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - rag-network
+    command: >
+      redis-server
+        --requirepass ${REDIS_PASSWORD:-ragredis}
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --appendonly yes
+        --appendfsync everysec
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-ragredis}", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ─────────────────────────────────────────
+  # Ollama — Local LLM Server
+  # ─────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag-ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    networks:
+      - rag-network
+    volumes:
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+    # Uncomment for GPU support (NVIDIA):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+# ─────────────────────────────────────────
+# Networks
+# ─────────────────────────────────────────
+networks:
+  rag-network:
+    driver: bridge
+    name: rag-network
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ─────────────────────────────────────────
+# Volumes — Persistent Data
+# ─────────────────────────────────────────
+volumes:
+  mongodb-data:
+    name: rag-mongodb-data
+  mongodb-config:
+    name: rag-mongodb-config
+  postgres-data:
+    name: rag-postgres-data
+  redis-data:
+    name: rag-redis-data
+  ollama-data:
+    name: rag-ollama-data
+  ai-model-cache:
+    name: rag-ai-model-cache
+  ai-logs:
+    name: rag-ai-logs
+  backend-uploads:
+    name: rag-backend-uploads
+  backend-logs:
+    name: rag-backend-logs
