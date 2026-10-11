@@ -1,3 +1,4 @@
+
 const winston = require('winston');
 const path = require('path');
 const fs = require('fs');
@@ -9,7 +10,48 @@ if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
 
-// Define log format
+/**
+ * Safe JSON stringify that handles circular references and axios noise.
+ * Never throws.
+ */
+function safeStringify(obj, indent = 2) {
+  if (obj === null || obj === undefined) return '';
+  if (typeof obj !== 'object') return String(obj);
+
+  const seen = new WeakSet();
+  try {
+    return JSON.stringify(
+      obj,
+      (key, value) => {
+        // Drop axios internals that cause circular refs
+        if (
+          key === 'agent' ||
+          key === 'socket' ||
+          key === 'sockets' ||
+          key === '_httpMessage' ||
+          key === 'config' ||
+          key === 'request' ||
+          key === 'response' ||
+          key === '_header' ||
+          key === 'req' ||
+          key === 'res'
+        ) {
+          return undefined;
+        }
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) return '[Circular]';
+          seen.add(value);
+        }
+        return value;
+      },
+      indent
+    );
+  } catch (e) {
+    return `[Unserializable: ${e.message}]`;
+  }
+}
+
+// File format (JSON, safe for large logs)
 const logFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
   winston.format.errors({ stack: true }),
@@ -17,52 +59,67 @@ const logFormat = winston.format.combine(
   winston.format.json()
 );
 
-// Console format (more readable for development)
+// Console format (readable)
 const consoleFormat = winston.format.combine(
   winston.format.colorize(),
   winston.format.timestamp({ format: 'HH:mm:ss.SSS' }),
-  winston.format.printf(({ timestamp, level, message, ...meta }) => {
+  winston.format.printf(({ timestamp, level, message, stack, ...meta }) => {
+    // Remove winston internals from meta
+    const cleanMeta = { ...meta };
+    delete cleanMeta.service;
+    delete cleanMeta.environment;
+    delete cleanMeta.splat;
+    delete cleanMeta[Symbol.for('level')];
+    delete cleanMeta[Symbol.for('message')];
+    delete cleanMeta[Symbol.for('splat')];
+
     let metaStr = '';
-    if (Object.keys(meta).length > 0) {
-      metaStr = `\n${JSON.stringify(meta, null, 2)}`;
+    if (Object.keys(cleanMeta).length > 0) {
+      metaStr = `\n${safeStringify(cleanMeta)}`;
     }
-    return `${timestamp} [${level}]: ${message}${metaStr}`;
+
+    let out = `${timestamp} [${level}]: ${message}${metaStr}`;
+    if (stack) {
+      out += `\n${stack}`;
+    }
+    return out;
   })
 );
 
 // Create logger instance
 const logger = winston.createLogger({
-  level: config.logging.level,
+  level: config.logging?.level || 'info',
   format: logFormat,
   defaultMeta: {
     service: 'secure-rag-backend',
     environment: config.env
   },
   transports: [
-    // Write all logs to console
+    // Console
     new winston.transports.Console({
       format: config.isProduction ? logFormat : consoleFormat
     }),
-    
-    // Write error logs to file
+
+    // Error log file
     new winston.transports.File({
       filename: path.join(logsDir, 'error.log'),
       level: 'error',
-      maxsize: config.logging.maxSize || '10m',
-      maxFiles: config.logging.maxFiles || 10
+      maxsize: config.logging?.maxSize || '10m',
+      maxFiles: config.logging?.maxFiles || 10
     }),
-    
-    // Write all logs to file
+
+    // Combined log file
     new winston.transports.File({
       filename: path.join(logsDir, 'combined.log'),
-      maxsize: config.logging.maxSize || '10m',
-      maxFiles: config.logging.maxFiles || 10
+      maxsize: config.logging?.maxSize || '10m',
+      maxFiles: config.logging?.maxFiles || 10
     })
   ],
   exitOnError: false
 });
 
-// Add request logging helper
+// ---- Helper functions ----
+
 logger.logRequest = (req, res, responseTime) => {
   logger.info('API Request', {
     method: req.method,
@@ -76,11 +133,11 @@ logger.logRequest = (req, res, responseTime) => {
   });
 };
 
-// Add error logging helper
 logger.logError = (error, req = null) => {
   logger.error('Application Error', {
-    message: error.message,
-    stack: error.stack,
+    message: error?.message,
+    stack: error?.stack,
+    name: error?.name,
     requestId: req?.requestId,
     url: req?.originalUrl,
     method: req?.method,
@@ -88,7 +145,6 @@ logger.logError = (error, req = null) => {
   });
 };
 
-// Add security event logger
 logger.logSecurityEvent = (event, req = null) => {
   logger.warn('Security Event', {
     event,
@@ -99,7 +155,6 @@ logger.logSecurityEvent = (event, req = null) => {
   });
 };
 
-// Add audit logger
 logger.logAudit = (action, details, req = null) => {
   logger.info('Audit', {
     action,

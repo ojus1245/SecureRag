@@ -223,3 +223,11 @@ config/local/
 *.crt
 *.cert
 secrets/
+\# Local vector store and temporary data
+ai-service/vector_store.json
+body.json
+
+# Secrets
+.env
+.env.*
+!.env.example

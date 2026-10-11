@@ -8,11 +8,16 @@ class ChatService {
     constructor() {
         this.api = axios.create({
             baseURL: API_BASE_URL,
-            timeout: 60000,
+            timeout: 180000,             // default for most requests
             headers: {
                 'Content-Type': 'application/json'
             }
         });
+
+        // Chat queries can take longer (LLM inference), use a separate timeout
+        this.queryTimeout = 300000;      // 5 minutes
+
+        logger.info('ChatService API_BASE_URL =', API_BASE_URL);
 
         // Request interceptor
         this.api.interceptors.request.use(
@@ -40,13 +45,20 @@ class ChatService {
 
     /**
      * Send chat query
+     * Uses longer timeout because LLM inference is slow on CPU.
      */
     async sendQuery(query, options = {}) {
         try {
-            const response = await this.api.post(API_ENDPOINTS.CHAT.QUERY, {
-                query,
-                ...options
-            });
+            const response = await this.api.post(
+                API_ENDPOINTS.CHAT.QUERY,
+                {
+                    query,
+                    ...options
+                },
+                {
+                    timeout: this.queryTimeout   // <-- override
+                }
+            );
 
             logger.info('Chat query sent successfully');
             eventBus.emit('chat:message_sent', response.data.data);
@@ -94,14 +106,18 @@ class ChatService {
 
                 for (const line of lines) {
                     if (line.startsWith('data: ')) {
-                        const data = JSON.parse(line.slice(6));
+                        try {
+                            const data = JSON.parse(line.slice(6));
 
-                        if (data.type === 'chunk') {
-                            onChunk?.(data.text);
-                        } else if (data.type === 'complete') {
-                            onComplete?.(data);
-                        } else if (data.type === 'error') {
-                            onError?.(new Error(data.message));
+                            if (data.type === 'chunk') {
+                                onChunk?.(data.text);
+                            } else if (data.type === 'complete') {
+                                onComplete?.(data);
+                            } else if (data.type === 'error') {
+                                onError?.(new Error(data.message));
+                            }
+                        } catch (parseErr) {
+                            logger.warn('Failed to parse SSE chunk:', parseErr.message);
                         }
                     }
                 }
@@ -123,7 +139,6 @@ class ChatService {
             return response.data;
         } catch (error) {
             logger.error('Safety check failed:', error);
-            // Fail closed - return unsafe
             return {
                 safe: false,
                 reason: 'Safety check unavailable'
@@ -260,27 +275,41 @@ class ChatService {
 
     /**
      * Handle API errors
+     * Includes the failing URL + status for debugging.
      */
     handleError(error) {
         if (error.response) {
             const { status, data } = error.response;
+            const url = error.config
+                ? `${error.config.baseURL || ''}${error.config.url || ''}`
+                : 'unknown URL';
+            const serverMsg =
+                (data && (data.message || data.detail || data.error)) || '';
 
             switch (status) {
                 case 400:
-                    return new Error(data.message || 'Invalid request');
+                    return new Error(serverMsg || 'Invalid request');
                 case 401:
                     return new Error('Session expired. Please login again.');
                 case 403:
-                    return new Error(data.message || 'Access denied');
+                    return new Error(serverMsg || 'Access denied');
                 case 404:
-                    return new Error(data.message || 'Not found');
+                    return new Error(
+                        serverMsg ||
+                        `Endpoint not found (404): ${url}`
+                    );
                 case 429:
                     return new Error('Rate limit exceeded. Please try again later.');
                 case 500:
-                    return new Error(data.message || 'Server error');
+                    return new Error(serverMsg || 'Server error');
                 default:
-                    return new Error(data.message || 'An error occurred');
+                    return new Error(serverMsg || `Request failed (${status}): ${url}`);
             }
+        } else if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+            return new Error(
+                'Request timed out. The AI model is taking too long to respond. ' +
+                'Try a shorter question or check the AI service.'
+            );
         } else if (error.request) {
             return new Error('Network error. Please check your connection.');
         } else {

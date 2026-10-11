@@ -4,6 +4,8 @@ Document retrieval service for RAG system
 
 import logging
 import hashlib
+import os
+import json
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 from datetime import datetime
@@ -18,15 +20,40 @@ logger = logging.getLogger(__name__)
 class DocumentRetriever:
     """Retrieve relevant documents based on query"""
 
-    def __init__(self, vector_store=None):
-        self.vector_store = vector_store or {}
+    def __init__(self, vector_store=None, persist_path="vector_store.json"):
+        self.persist_path = persist_path
+
+        # Load from provided store, disk, or start empty
+        if vector_store is not None:
+            self.vector_store = vector_store
+        elif os.path.exists(persist_path):
+            try:
+                with open(persist_path, 'r', encoding='utf-8') as f:
+                    self.vector_store = json.load(f)
+                logger.info(f"✅ Loaded {len(self.vector_store)} documents from {persist_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load vector store from disk: {e}")
+                self.vector_store = {}
+        else:
+            self.vector_store = {}
+            logger.info(f"No existing vector store found at {persist_path}, starting fresh")
+
         self.embedder = None
         self.scorer = RelevanceScorer()
         self.reranker = DocumentReranker()
         self.cache = {}
         self.cache_size = 100
         self.default_top_k = 5
-        self.similarity_threshold = 0.0  # lowered to 0 so all candidates pass
+        self.similarity_threshold = 0.0
+
+    def _persist_vector_store(self):
+        """Save vector store to disk"""
+        try:
+            with open(self.persist_path, 'w', encoding='utf-8') as f:
+                json.dump(self.vector_store, f, ensure_ascii=False, indent=2)
+            logger.info(f"Persisted {len(self.vector_store)} documents to {self.persist_path}")
+        except Exception as e:
+            logger.error(f"Failed to persist vector store: {e}")
 
     def set_embedder(self, embedder):
         """Set embedder for query processing"""
@@ -92,14 +119,44 @@ class DocumentRetriever:
             return self._empty_result(query, f"Retrieval failed: {str(e)}")
 
     def _keyword_score_documents(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Score documents by keyword overlap with query"""
+        """
+        Score documents by keyword overlap with query.
+        Searches title, tags, AND content (body text).
+        """
         query_lower = query.lower()
-        query_words = set(w for w in query_lower.split() if len(w) > 2)
+
+        # Common English stopwords to ignore during matching
+        stopwords = {
+            'what', 'when', 'where', 'which', 'who', 'why', 'how',
+            'the', 'and', 'for', 'are', 'was', 'were', 'this', 'that',
+            'with', 'from', 'have', 'has', 'had', 'you', 'your',
+            'used', 'use', 'does', 'did', 'can', 'could', 'should', 'would',
+            'say', 'says', 'said', 'tell', 'about', 'into', 'over', 'under',
+            'also', 'than', 'then', 'them', 'they', 'their', 'there',
+            'here', 'been', 'being', 'will', 'shall', 'may', 'might',
+            'must', 'not', 'but', 'all', 'any', 'some', 'one', 'two'
+        }
+
+        # Normalize query into searchable words
+        query_words = set(
+            w.strip('?.,!:;()[]{}"\'')
+            for w in query_lower.split()
+            if len(w) > 2 and w not in stopwords
+        )
+
+        # Also add singular forms (basic stemming): remove trailing 's'
+        expanded_words = set(query_words)
+        for w in query_words:
+            if w.endswith('s') and len(w) > 3:
+                expanded_words.add(w[:-1])
+        query_words = expanded_words
 
         scored = []
         for doc in candidates:
-            metadata = doc.get("metadata", {})
+            metadata = doc.get("metadata", {}) or {}
+
             title = str(metadata.get("title", "")).lower()
+
             tags = metadata.get("tags", [])
             if isinstance(tags, str):
                 tags_text = tags.lower()
@@ -108,16 +165,21 @@ class DocumentRetriever:
             else:
                 tags_text = ""
 
-            searchable = f"{title} {tags_text}"
+            # Include content so queries can match body text
+            content_text = str(
+                doc.get("content", "") or metadata.get("content", "")
+            ).lower()
 
-            # Count keyword matches
-            matches = 0
-            for word in query_words:
-                if word in searchable:
-                    matches += 1
+            searchable = f"{title} {tags_text} {content_text}"
 
-            # Base score 0.5, plus 0.1 per match, capped at 1.0
-            score = min(0.5 + (matches * 0.1), 1.0)
+            # Count how many query words appear
+            matches = sum(1 for word in query_words if word in searchable)
+
+            # Score: base 0.3 + 0.15 per match, capped at 1.0
+            if matches == 0:
+                score = 0.0
+            else:
+                score = min(0.3 + (matches * 0.15), 1.0)
 
             scored.append({
                 "documentId": doc.get("documentId") or doc.get("document_id"),
@@ -252,28 +314,35 @@ class DocumentRetriever:
             "message": message
         }
 
-    def add_document(self, document_id: str, embedding: List[float], metadata: Dict[str, Any]):
+    def add_document(self, document_id: str, embedding: List[float], metadata: Dict[str, Any],
+                     content: str = ""):
         """Add document to vector store (legacy method)"""
         self.vector_store[document_id] = {
             "document_id": document_id,
             "embedding": embedding,
+            "content": content,
             "metadata": metadata,
             "added_at": datetime.now().isoformat()
         }
+        self._persist_vector_store()
 
     def remove_document(self, document_id: str):
         """Remove document from vector store"""
         if document_id in self.vector_store:
             del self.vector_store[document_id]
+            self._persist_vector_store()
 
-    def update_document(self, document_id: str, embedding: List[float], metadata: Dict[str, Any]):
+    def update_document(self, document_id: str, embedding: List[float], metadata: Dict[str, Any],
+                        content: str = ""):
         """Update document in vector store"""
         if document_id in self.vector_store:
             self.vector_store[document_id].update({
                 "embedding": embedding,
+                "content": content,
                 "metadata": metadata,
                 "updated_at": datetime.now().isoformat()
             })
+            self._persist_vector_store()
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get retrieval statistics"""
@@ -282,5 +351,6 @@ class DocumentRetriever:
             "cache_size": len(self.cache),
             "cache_limit": self.cache_size,
             "similarity_threshold": self.similarity_threshold,
-            "default_top_k": self.default_top_k
+            "default_top_k": self.default_top_k,
+            "persist_path": self.persist_path
         }

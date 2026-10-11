@@ -17,16 +17,8 @@ class AIService {
     try {
       const response = await axios.post(
         `${this.aiServiceUrl}/safety/check`,
-        {
-          text: query,
-          userId
-        },
-        {
-          timeout: 10000,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        { text: query, userId },
+        { timeout: 10000, headers: { 'Content-Type': 'application/json' } }
       );
 
       return {
@@ -37,8 +29,6 @@ class AIService {
       };
     } catch (error) {
       logger.error('Safety check error:', error);
-      
-      // Fail closed - if safety check fails, don't allow query
       return {
         safe: false,
         score: 0,
@@ -51,6 +41,9 @@ class AIService {
   /**
    * Generate response using RAG
    */
+  /**
+ * Generate response using RAG
+ */
   async generateResponse(query, documents, options = {}) {
     try {
       const response = await axios.post(
@@ -73,14 +66,11 @@ class AIService {
           }
         },
         {
-          timeout: 60000,
-          headers: {
-            'Content-Type': 'application/json'
-          }
+          timeout: 300000,     // 5 minutes — CPU inference is slow
+          headers: { 'Content-Type': 'application/json' }
         }
       );
 
-      // Process response
       return {
         text: response.data.text,
         citations: response.data.citations || [],
@@ -90,8 +80,19 @@ class AIService {
         responseTime: response.headers['x-response-time'] || null
       };
     } catch (error) {
-      logger.error('Generate response error:', error);
-      throw new Error('Failed to generate AI response');
+      // Log a minimal, safe version of the error (avoid circular refs)
+      const safeErr = {
+        message: error.message,
+        code: error.code,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data
+      };
+      logger.error('Generate response error:', safeErr);
+      throw new Error(
+        `Failed to generate AI response: ${error.message}` +
+        (error.response?.status ? ` (HTTP ${error.response.status})` : '')
+      );
     }
   }
 
@@ -102,19 +103,9 @@ class AIService {
     try {
       const response = await axios.post(
         `${this.aiServiceUrl}/suggestions`,
-        {
-          query,
-          userId,
-          maxSuggestions: 5
-        },
-        {
-          timeout: 10000,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        { query, userId, maxSuggestions: 5 },
+        { timeout: 10000, headers: { 'Content-Type': 'application/json' } }
       );
-
       return response.data.suggestions || [];
     } catch (error) {
       logger.error('Get suggestions error:', error);
@@ -129,18 +120,9 @@ class AIService {
     try {
       const response = await axios.post(
         `${this.aiServiceUrl}/embeddings`,
-        {
-          text,
-          model: 'sentence-transformers/all-MiniLM-L6-v2'
-        },
-        {
-          timeout: 30000,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        { text, model: 'sentence-transformers/all-MiniLM-L6-v2' },
+        { timeout: 30000, headers: { 'Content-Type': 'application/json' } }
       );
-
       return response.data.embedding;
     } catch (error) {
       logger.error('Generate embedding error:', error);
@@ -155,17 +137,9 @@ class AIService {
     try {
       const response = await axios.post(
         `${this.aiServiceUrl}/classify`,
-        {
-          text: content
-        },
-        {
-          timeout: 15000,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        { text: content },
+        { timeout: 15000, headers: { 'Content-Type': 'application/json' } }
       );
-
       return {
         classification: response.data.classification,
         confidence: response.data.confidence,
@@ -185,17 +159,9 @@ class AIService {
     try {
       const response = await axios.post(
         `${this.aiServiceUrl}/entities`,
-        {
-          text
-        },
-        {
-          timeout: 15000,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        { text },
+        { timeout: 15000, headers: { 'Content-Type': 'application/json' } }
       );
-
       return response.data.entities || [];
     } catch (error) {
       logger.error('Extract entities error:', error);
@@ -210,18 +176,9 @@ class AIService {
     try {
       const response = await axios.post(
         `${this.aiServiceUrl}/summarize`,
-        {
-          text: content,
-          maxLength
-        },
-        {
-          timeout: 30000,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        { text: content, maxLength },
+        { timeout: 30000, headers: { 'Content-Type': 'application/json' } }
       );
-
       return response.data.summary;
     } catch (error) {
       logger.error('Summarize document error:', error);
@@ -238,7 +195,6 @@ class AIService {
         `${this.aiServiceUrl}/health`,
         { timeout: 5000 }
       );
-
       return {
         status: 'healthy',
         latency: response.headers['x-response-time'] || null,
@@ -247,10 +203,7 @@ class AIService {
       };
     } catch (error) {
       logger.error('AI service health check error:', error);
-      return {
-        status: 'unhealthy',
-        error: error.message
-      };
+      return { status: 'unhealthy', error: error.message };
     }
   }
 
@@ -259,22 +212,18 @@ class AIService {
    */
   async retryRequest(requestFn, maxRetries = this.maxRetries) {
     let lastError;
-    
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         return await requestFn();
       } catch (error) {
         lastError = error;
         logger.warn(`AI service request failed (attempt ${attempt}/${maxRetries}):`, error.message);
-        
         if (attempt < maxRetries) {
-          // Exponential backoff
           const delay = Math.pow(2, attempt - 1) * 1000;
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
-    
     throw lastError;
   }
 
@@ -287,10 +236,7 @@ class AIService {
         userId,
         action: `AI_${action.toUpperCase()}`,
         resourceType: 'system',
-        details: {
-          ...details,
-          timestamp: new Date().toISOString()
-        },
+        details: { ...details, timestamp: new Date().toISOString() },
         status: 'success'
       });
     } catch (error) {
@@ -307,7 +253,6 @@ class AIService {
         `${this.aiServiceUrl}/models`,
         { timeout: 10000 }
       );
-
       return response.data.models || [];
     } catch (error) {
       logger.error('Get model info error:', error);

@@ -24,6 +24,7 @@ class RAGService {
           vectorId: document.vectorId,
           encryptedEmbedding: document.encryptedEmbedding,
           embeddingKeyId: document.embeddingKeyId,
+          content: document.content,           // ✅ FIX: send raw content
           metadata: {
             title: document.title,
             department: document.department,
@@ -59,6 +60,7 @@ class RAGService {
           vectorId: document.vectorId,
           encryptedEmbedding: document.encryptedEmbedding,
           embeddingKeyId: document.embeddingKeyId,
+          content: document.content,           // ✅ FIX: send content too
           metadata: {
             title: document.title,
             department: document.department,
@@ -109,7 +111,7 @@ class RAGService {
     try {
       // Get user's accessible documents
       const accessibleDocuments = await this.getAccessibleDocuments(userId);
-      
+
       if (accessibleDocuments.length === 0) {
         return {
           documents: [],
@@ -122,9 +124,9 @@ class RAGService {
         `${this.aiServiceUrl}/rag/retrieve`,
         {
           query,
-          documentIds: accessibleDocuments.map(doc => doc._id),
+          documentIds: accessibleDocuments.map(doc => doc._id.toString()),
           maxResults,
-          userId
+          userId: userId.toString()
         },
         {
           timeout: this.retrievalTimeout,
@@ -172,8 +174,8 @@ class RAGService {
       let filter = {
         status: 'published',
         $or: [
-          { owner: userId }, // Owned documents
-          { classification: 'public' } // Public documents
+          { owner: userId },                 // Owned documents
+          { classification: 'public' }       // Public documents
         ]
       };
 
@@ -206,10 +208,10 @@ class RAGService {
         filter.$or.push({ _id: { $in: aclDocumentIds } });
       }
 
-      // Get documents
+      // Get documents — always include content so RAG has something to search
       const documents = await Document.find(filter)
-        .select('_id title vectorId encryptedEmbedding embeddingKeyId classification department tags')
-        .limit(1000); // Limit to prevent memory issues
+        .select('_id title content vectorId encryptedEmbedding embeddingKeyId classification department tags')
+        .limit(1000);
 
       return documents;
     } catch (error) {
@@ -225,8 +227,12 @@ class RAGService {
     try {
       const processedDocs = [];
 
+      if (!retrievedDocs || !Array.isArray(retrievedDocs)) {
+        return processedDocs;
+      }
+
       for (const doc of retrievedDocs) {
-        // Get full document from database
+        // Get full document from database (include content)
         const fullDoc = await Document.findById(doc.documentId)
           .populate('owner', 'username fullName')
           .select('-encryptedContent -encryptedEmbedding');
@@ -235,6 +241,7 @@ class RAGService {
           processedDocs.push({
             _id: fullDoc._id,
             title: fullDoc.title,
+            content: fullDoc.content,        // ✅ FIX: include content for generation
             classification: fullDoc.classification,
             department: fullDoc.department,
             tags: fullDoc.tags,
@@ -268,7 +275,7 @@ class RAGService {
           documents: documents.map(doc => ({
             id: doc._id,
             title: doc.title,
-            content: doc.content, // In production, this would be decrypted
+            content: doc.content,            // Now populated
             relevanceScore: doc.relevanceScore
           })),
           options: {
@@ -328,7 +335,7 @@ class RAGService {
   async batchAddDocuments(documents) {
     try {
       const results = [];
-      
+
       for (const document of documents) {
         try {
           const result = await this.addDocument(document);
@@ -358,8 +365,6 @@ class RAGService {
    */
   async getRetrievalStats(userId) {
     try {
-      // This would typically query metrics database
-      // For now, return placeholder stats
       return {
         totalRetrievals: 0,
         averageResponseTime: 0,

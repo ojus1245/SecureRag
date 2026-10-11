@@ -101,9 +101,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Authentication
-security = HTTPBearer()
-
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -231,18 +228,19 @@ async def check_safety(request: SafetyCheckRequest):
 
 @app.post("/rag/documents")
 async def add_rag_document(request: Dict[str, Any]):
-    """Add a document to the RAG vector store"""
+    """Add a document to the RAG vector store (with content + persistence)."""
     try:
         document_id = request.get("documentId")
         vector_id = request.get("vectorId")
         encrypted_embedding = request.get("encryptedEmbedding")
         embedding_key_id = request.get("embeddingKeyId")
-        metadata = request.get("metadata", {})
+        content = request.get("content", "") or ""
+        metadata = request.get("metadata", {}) or {}
 
-        if not document_id or not encrypted_embedding:
+        if not document_id:
             raise HTTPException(
                 status_code=400,
-                detail="documentId and encryptedEmbedding are required"
+                detail="documentId is required"
             )
 
         if hasattr(retriever, 'vector_store'):
@@ -251,10 +249,19 @@ async def add_rag_document(request: Dict[str, Any]):
                 "vectorId": vector_id,
                 "encryptedEmbedding": encrypted_embedding,
                 "embeddingKeyId": embedding_key_id,
+                "content": content,             # FIX 2: store content
                 "metadata": metadata
             }
 
-        logger.info(f"Document added to RAG: {document_id} | Title: {metadata.get('title')}")
+            # FIX 1: persist to disk so it survives restarts
+            if hasattr(retriever, '_persist_vector_store'):
+                retriever._persist_vector_store()
+
+        logger.info(
+            f"Document added to RAG: {document_id} | "
+            f"Title: {metadata.get('title')} | "
+            f"Content length: {len(content)}"
+        )
         return {
             "success": True,
             "documentId": document_id,
@@ -280,6 +287,7 @@ async def list_rag_documents():
                 {
                     "documentId": doc_id,
                     "vectorId": doc.get("vectorId"),
+                    "contentLength": len(doc.get("content", "") or ""),
                     "metadata": doc.get("metadata", {})
                 }
                 for doc_id, doc in store.items()
@@ -296,6 +304,9 @@ async def delete_rag_document(document_id: str):
     try:
         if hasattr(retriever, 'vector_store') and document_id in retriever.vector_store:
             del retriever.vector_store[document_id]
+            # Persist after deletion too
+            if hasattr(retriever, '_persist_vector_store'):
+                retriever._persist_vector_store()
 
         logger.info(f"Document removed from RAG: {document_id}")
         return {
