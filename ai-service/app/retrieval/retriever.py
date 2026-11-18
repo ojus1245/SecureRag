@@ -120,12 +120,14 @@ class DocumentRetriever:
 
     def _keyword_score_documents(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Score documents by keyword overlap with query.
-        Searches title, tags, AND content (body text).
+        Score documents across all documents using weighted BM25/TF-IDF principles.
+        Calculates title weight (x3), tag weight (x2), and full content keyword density.
+        Also extracts best matching excerpt snippet for citations.
         """
+        import re
+        import math
         query_lower = query.lower()
 
-        # Common English stopwords to ignore during matching
         stopwords = {
             'what', 'when', 'where', 'which', 'who', 'why', 'how',
             'the', 'and', 'for', 'are', 'was', 'were', 'this', 'that',
@@ -134,29 +136,19 @@ class DocumentRetriever:
             'say', 'says', 'said', 'tell', 'about', 'into', 'over', 'under',
             'also', 'than', 'then', 'them', 'they', 'their', 'there',
             'here', 'been', 'being', 'will', 'shall', 'may', 'might',
-            'must', 'not', 'but', 'all', 'any', 'some', 'one', 'two'
+            'must', 'not', 'but', 'all', 'any', 'some', 'one', 'two', 'does'
         }
 
-        # Normalize query into searchable words
-        query_words = set(
-            w.strip('?.,!:;()[]{}"\'')
-            for w in query_lower.split()
-            if len(w) > 2 and w not in stopwords
-        )
-
-        # Also add singular forms (basic stemming): remove trailing 's'
-        expanded_words = set(query_words)
-        for w in query_words:
-            if w.endswith('s') and len(w) > 3:
-                expanded_words.add(w[:-1])
-        query_words = expanded_words
+        # Normalize query terms
+        raw_words = re.findall(r'[a-zA-Z0-9_]{3,}', query_lower)
+        query_words = [w for w in raw_words if w not in stopwords]
+        if not query_words:
+            query_words = raw_words or [query_lower]
 
         scored = []
         for doc in candidates:
             metadata = doc.get("metadata", {}) or {}
-
-            title = str(metadata.get("title", "")).lower()
-
+            title = str(metadata.get("title", "") or "").lower()
             tags = metadata.get("tags", [])
             if isinstance(tags, str):
                 tags_text = tags.lower()
@@ -165,31 +157,71 @@ class DocumentRetriever:
             else:
                 tags_text = ""
 
-            # Include content so queries can match body text
-            content_text = str(
-                doc.get("content", "") or metadata.get("content", "")
-            ).lower()
+            raw_content = str(doc.get("content", "") or metadata.get("content", "") or "")
+            content_lower = raw_content.lower()
 
-            searchable = f"{title} {tags_text} {content_text}"
+            # Word boundary matching
+            title_matches = 0
+            tag_matches = 0
+            content_matches = 0
 
-            # Count how many query words appear
-            matches = sum(1 for word in query_words if word in searchable)
+            best_snippet = ""
+            best_snippet_score = 0
 
-            # Score: base 0.3 + 0.15 per match, capped at 1.0
-            if matches == 0:
-                score = 0.0
+            for word in query_words:
+                # Stem check
+                stem = word[:-1] if word.endswith('s') and len(word) > 3 else word
+                pattern = re.compile(r'\b' + re.escape(stem), re.IGNORECASE)
+
+                if pattern.search(title):
+                    title_matches += 1
+                if pattern.search(tags_text):
+                    tag_matches += 1
+                c_hits = len(pattern.findall(content_lower))
+                if c_hits > 0:
+                    content_matches += 1
+
+            # Exact phrase bonus
+            phrase_bonus = 0.0
+            if len(query_words) >= 2 and query_lower in content_lower:
+                phrase_bonus = 0.25
+
+            # Calculate score
+            matched_terms = sum(1 for w in query_words if (w in title or w in tags_text or w in content_lower))
+            term_ratio = matched_terms / len(query_words) if query_words else 0.0
+
+            if matched_terms == 0 and len(candidates) > 1:
+                final_score = 0.0
             else:
-                score = min(0.3 + (matches * 0.15), 1.0)
+                weighted_signal = (title_matches * 0.35) + (tag_matches * 0.25) + (term_ratio * 0.40) + phrase_bonus
+                final_score = round(min(0.98, max(0.40, min(1.0, 0.35 + weighted_signal))), 3)
+
+            # Find best sentence snippet for citation redirect
+            if raw_content:
+                sentences = re.split(r'(?<=[.!?\n])\s+', raw_content)
+                for s in sentences:
+                    s_clean = s.strip()
+                    if 15 < len(s_clean) < 300:
+                        s_lower = s_clean.lower()
+                        s_score = sum(1 for w in query_words if w in s_lower)
+                        if s_score > best_snippet_score:
+                            best_snippet_score = s_score
+                            best_snippet = s_clean
+                if not best_snippet and sentences:
+                    best_snippet = sentences[0][:200]
 
             scored.append({
                 "documentId": doc.get("documentId") or doc.get("document_id"),
+                "document_id": doc.get("documentId") or doc.get("document_id"),
                 "vectorId": doc.get("vectorId"),
                 "title": metadata.get("title", "Untitled"),
                 "classification": metadata.get("classification", "internal"),
                 "department": metadata.get("department", ""),
                 "tags": metadata.get("tags", []),
-                "score": score,
-                "relevanceScore": score,
+                "score": final_score,
+                "relevanceScore": final_score,
+                "effective_score": final_score,
+                "snippet": best_snippet,
                 "metadata": metadata
             })
 

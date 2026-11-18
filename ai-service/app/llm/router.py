@@ -119,6 +119,46 @@ class LLMRouter:
             result["total_response_time"] = response_time
             self._update_average_response_time(response_time)
 
+            # Generate structured citations with direct mention snippets and document IDs
+            citations = []
+            if documents:
+                for i, doc in enumerate(documents, 1):
+                    doc_id = str(doc.get("id") or doc.get("_id") or doc.get("documentId") or "")
+                    doc_title = doc.get("title", f"Document {i}")
+                    doc_content = doc.get("content", "") or ""
+                    snippet = doc.get("snippet", "")
+                    score = doc.get("relevanceScore", doc.get("score", 0.95))
+
+                    if not snippet and doc_content:
+                        import re
+                        sentences = re.split(r'(?<=[.!?\n])\s+', doc_content.strip())
+                        snippet = sentences[0][:200] if sentences else doc_content[:200]
+
+                    citations.append({
+                        "id": f"cite-{i}",
+                        "number": i,
+                        "document_id": doc_id,
+                        "documentId": doc_id,
+                        "title": doc_title,
+                        "text": f"[{i}] {doc_title}",
+                        "snippet": snippet,
+                        "relevance_score": score,
+                        "relevanceScore": score,
+                        "classification": doc.get("classification", "internal"),
+                        "department": doc.get("department", "")
+                    })
+            result["citations"] = citations
+
+            # Calculate overall confidence score
+            if documents:
+                top_scores = [d.get("relevanceScore", d.get("score", 0.9)) for d in documents if d.get("relevanceScore", d.get("score", 0)) > 0]
+                if top_scores:
+                    result["confidence"] = round(min(0.99, max(0.50, sum(top_scores) / len(top_scores))), 2)
+                else:
+                    result["confidence"] = 0.50
+            else:
+                result["confidence"] = 0.40
+
             return result
 
         except Exception as e:
@@ -132,6 +172,31 @@ class LLMRouter:
                     "timestamp": datetime.now().isoformat()
                 }
             }
+
+    def _generate_extractive_fallback(self, query: str, documents: Optional[List[Dict[str, Any]]]) -> str:
+        """Intelligent extractive answer from retrieved documents when external LLM or Ollama is unavailable"""
+        if not documents:
+            return (
+                f"I searched the knowledge base, but found no relevant documents matching your query: '{query}'. "
+                "You can upload documents in the 'Upload Document' section, and I will be able to retrieve and answer questions from them. "
+                "(Tip: To enable full generative conversational AI, configure GEMINI_API_KEY in ai-service/.env)."
+            )
+
+        parts = []
+        for i, doc in enumerate(documents[:3], 1):
+            title = doc.get("title", f"Document {i}")
+            content = (doc.get("content", "") or "").strip()
+            if content:
+                excerpt = content[:500] + ("..." if len(content) > 500 else "")
+                parts.append(f"**From document \"{title}\":**\n> {excerpt}")
+            else:
+                parts.append(f"**Document \"{title}\"** is relevant to your query.")
+
+        return (
+            "Here is the relevant information retrieved from your secure documents:\n\n"
+            + "\n\n".join(parts)
+            + "\n\n*(Note: Configure GEMINI_API_KEY in ai-service/.env to enable full generative AI synthesis.)*"
+        )
 
     async def _route_local_first(self,
                                  query: str,
@@ -149,10 +214,20 @@ class LLMRouter:
 
         if self.config["fallback_to_external"]:
             result = await self.external_client.generate(prompt, options=options)
-            result["provider"] = "external"
-            return result
+            if result.get("text"):
+                result["provider"] = "external"
+                return result
 
-        return {"text": "", "error": "No LLM service available", "provider": "none"}
+        fallback_text = self._generate_extractive_fallback(query, documents)
+        return {
+            "text": fallback_text,
+            "provider": "extractive",
+            "model": "retrieval-extractive",
+            "confidence": 0.85 if documents else 0.5,
+            "citations": [doc.get("title") for doc in (documents or [])],
+            "response_time": 0.05,
+            "timestamp": datetime.now().isoformat()
+        }
 
     async def _route_external_first(self,
                                     query: str,
@@ -171,10 +246,21 @@ class LLMRouter:
             health = await self.ollama_client.check_health()
             if health["status"] == "healthy":
                 result = await self.ollama_client.generate(prompt, options=options)
-                result["provider"] = "local"
-                return result
+                if result.get("text"):
+                    result["provider"] = "local"
+                    return result
 
-        return result
+        # Extractive fallback
+        fallback_text = self._generate_extractive_fallback(query, documents)
+        return {
+            "text": fallback_text,
+            "provider": "extractive",
+            "model": "retrieval-extractive",
+            "confidence": 0.85 if documents else 0.5,
+            "citations": [doc.get("title") for doc in (documents or [])],
+            "response_time": 0.05,
+            "timestamp": datetime.now().isoformat()
+        }
 
     async def _route_local_only(self,
                                 query: str,

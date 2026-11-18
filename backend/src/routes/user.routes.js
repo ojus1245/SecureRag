@@ -44,8 +44,12 @@ const createUserValidation = [
   
   body('roleId')
     .optional()
-    .isMongoId()
-    .withMessage('Invalid role ID')
+    .custom((val) => typeof val === 'string' && val.length > 0)
+    .withMessage('Invalid role'),
+  body('role')
+    .optional()
+    .custom((val) => typeof val === 'string' && val.length > 0)
+    .withMessage('Invalid role')
 ];
 
 const updateUserValidation = [
@@ -74,7 +78,15 @@ const updateUserValidation = [
   body('preferences')
     .optional()
     .isObject()
-    .withMessage('Preferences must be an object')
+    .withMessage('Preferences must be an object'),
+  body('roleId')
+    .optional()
+    .custom((val) => typeof val === 'string' && val.length > 0)
+    .withMessage('Invalid role'),
+  body('role')
+    .optional()
+    .custom((val) => typeof val === 'string' && val.length > 0)
+    .withMessage('Invalid role')
 ];
 
 const updateRoleValidation = [
@@ -87,6 +99,19 @@ const updateRoleValidation = [
 
 // All routes require authentication
 router.use(authenticate);
+
+// User search route (placed BEFORE /:userId to avoid param conflict)
+router.get(
+  '/search',
+  authorize('user:manage', 'document:share'),
+  (req, res, next) => {
+    if (req.query.q && !req.query.search) {
+      req.query.search = req.query.q;
+    }
+    next();
+  },
+  userController.getAllUsers
+);
 
 // User management routes (Admin/Manager access)
 router.route('/')

@@ -32,7 +32,7 @@ import { useChat } from '../../hooks/useChat';
 import { useAuth } from '../../hooks/useAuth';
 import { useWebSocket } from '../../hooks/useWebSocket';
 
-const ChatWindow = ({ conversationId, onConversationChange }) => {
+const ChatWindow = ({ conversationId, onConversationChange, initialQuery, targetDocumentId, targetDocumentTitle }) => {
   const { user } = useAuth();
   const {
     messages,
@@ -59,6 +59,13 @@ const ChatWindow = ({ conversationId, onConversationChange }) => {
   // FIXED: Use import.meta.env instead of process.env
   const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:5000/ws';
   const { connectionStatus, subscribe } = useWebSocket(wsUrl);
+
+  // Auto-fill initialQuery if provided
+  useEffect(() => {
+    if (initialQuery && !inputValue) {
+      setInputValue(initialQuery);
+    }
+  }, [initialQuery]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -91,7 +98,8 @@ const ChatWindow = ({ conversationId, onConversationChange }) => {
   };
 
   const handleSendMessage = async (content, attachments = []) => {
-    if (!content.trim() && attachments.length === 0) return;
+    const textToSend = typeof content === 'string' ? content : inputValue;
+    if (!textToSend.trim() && attachments.length === 0) return;
 
     setInputValue('');
     setIsTyping(true);
@@ -99,7 +107,7 @@ const ChatWindow = ({ conversationId, onConversationChange }) => {
 
     try {
       // Safety check
-      const safetyResult = await chatService.checkSafety(content);
+      const safetyResult = await chatService.checkSafety(textToSend);
       setSafetyCheck(safetyResult);
 
       if (!safetyResult.safe) {
@@ -113,14 +121,21 @@ const ChatWindow = ({ conversationId, onConversationChange }) => {
         return;
       }
 
-      await sendMessage(content, attachments);
+      const sendResult = await sendMessage(textToSend, {
+        attachments,
+        documentId: targetDocumentId
+      });
+
+      if (sendResult?.conversationId && sendResult.conversationId !== conversationId) {
+        onConversationChange?.(sendResult.conversationId);
+      }
 
       await auditService.logEvent({
         action: 'CHAT_QUERY',
         resourceType: 'chat',
         details: {
-          conversationId,
-          queryLength: content.length
+          conversationId: conversationId || sendResult?.conversationId,
+          queryLength: textToSend.length
         },
         status: 'success'
       });
@@ -200,14 +215,25 @@ const ChatWindow = ({ conversationId, onConversationChange }) => {
           <Typography variant="h6" component="h2">
             Privacy-Aware RAG Chat
           </Typography>
-          {user?.securityClearance && (
+          {targetDocumentTitle && (
             <Chip
-              label={user.securityClearance.toUpperCase()}
+              label={`Filtered Document: ${targetDocumentTitle}`}
+              color="secondary"
               size="small"
-              color={user.securityClearance === 'restricted' ? 'error' : 'primary'}
-              variant="outlined"
-              sx={{ ml: 1 }}
+              sx={{ fontWeight: 600 }}
             />
+          )}
+          {user?.securityClearance && (
+            <Tooltip title={`Your Security Clearance Level is ${user.securityClearance.toUpperCase()} (Highest Access Tier: full access to Restricted, Confidential, Internal, and Public knowledge)`}>
+              <Chip
+                icon={<SecurityIcon sx={{ fontSize: '14px !important' }} />}
+                label={`CLEARANCE: ${user.securityClearance.toUpperCase()}`}
+                size="small"
+                color="success"
+                variant="outlined"
+                sx={{ ml: 1, fontWeight: 600, borderColor: 'success.main', color: 'success.main' }}
+              />
+            </Tooltip>
           )}
         </Box>
 
@@ -241,7 +267,7 @@ const ChatWindow = ({ conversationId, onConversationChange }) => {
       </Paper>
 
       {/* Connection status */}
-      {connectionStatus && connectionStatus !== 'connected' && (
+      {connectionStatus === 'error' && (
         <Alert severity="warning" sx={{ m: 1 }}>
           Connection status: {connectionStatus}
         </Alert>
@@ -278,15 +304,48 @@ const ChatWindow = ({ conversationId, onConversationChange }) => {
             alignItems: 'center',
             justifyContent: 'center',
             height: '100%',
-            color: 'text.secondary'
+            color: 'text.secondary',
+            textAlign: 'center',
+            p: 3
           }}>
-            <SecurityIcon sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
-            <Typography variant="h6">
-              Start a secure conversation
+            <SecurityIcon sx={{ fontSize: 56, mb: 2, color: 'primary.main', opacity: 0.8 }} />
+            <Typography variant="h5" sx={{ fontWeight: 600, color: 'text.primary', mb: 1 }}>
+              Start a Secure Conversation
             </Typography>
-            <Typography variant="body2" sx={{ mt: 1 }}>
-              Your queries are encrypted and privacy-protected
+            <Typography variant="body2" sx={{ maxWidth: 480, mb: 3 }}>
+              Ask questions about your uploaded documents. Powered by Gemini 3.5 Flash Lite with privacy-aware retrieval and classification filtering.
             </Typography>
+
+            <Typography variant="caption" sx={{ textTransform: 'uppercase', letterSpacing: 1, mb: 1.5, color: 'text.secondary', fontWeight: 600 }}>
+              Suggested Questions (Click to Ask)
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 620 }}>
+              <Chip
+                label="Summarize our documents"
+                onClick={() => handleSendMessage("Summarize our documents")}
+                clickable
+                color="primary"
+                variant="outlined"
+              />
+              <Chip
+                label="What information is in Ojus Patil Aquiring Data?"
+                onClick={() => handleSendMessage("What information is in Ojus Patil Aquiring Data?")}
+                clickable
+                variant="outlined"
+              />
+              <Chip
+                label="What is in the Test DSCM Paper?"
+                onClick={() => handleSendMessage("What is in the Test DSCM Paper?")}
+                clickable
+                variant="outlined"
+              />
+              <Chip
+                label="What are the security requirements?"
+                onClick={() => handleSendMessage("What are the security requirements?")}
+                clickable
+                variant="outlined"
+              />
+            </Box>
           </Box>
         ) : (
           messages.map((message, index) => (
@@ -304,7 +363,7 @@ const ChatWindow = ({ conversationId, onConversationChange }) => {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <CircularProgress size={20} />
             <Typography variant="body2" color="text.secondary">
-              Generating response...
+              Generating response with Gemini...
             </Typography>
           </Box>
         )}

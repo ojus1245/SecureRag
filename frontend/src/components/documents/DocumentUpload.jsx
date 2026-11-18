@@ -83,6 +83,9 @@ const DocumentUpload = ({ onUploadComplete, onCancel }) => {
                 } catch (err) {
                     console.error('Failed to read file:', err);
                 }
+            } else {
+                // For PDF, DOC, DOCX files, leave content empty so backend's native pdf-parse / mammoth parses the clean text
+                setContent('');
             }
         }
     }, [title]);
@@ -96,7 +99,7 @@ const DocumentUpload = ({ onUploadComplete, onCancel }) => {
 
     const steps = ['Upload File', 'Document Details', 'Security Settings', 'Review'];
 
-    const handleNext = () => setActiveStep(prev => prev + 1);
+    const handleNext = () => { setActiveStep(prev => prev + 1); };
     const handleBack = () => setActiveStep(prev => prev - 1);
 
     const handleAddTag = () => {
@@ -148,14 +151,9 @@ const DocumentUpload = ({ onUploadComplete, onCancel }) => {
                 ) {
                     finalContent = await file.text();
                 } else {
-                    finalContent = `Content from file: ${file.name}`;
+                    // For binary files (PDF, DOC, DOCX), send empty string so backend parses the actual file Buffer
+                    finalContent = '';
                 }
-
-                setContent(finalContent);
-            }
-
-            if (!finalContent || finalContent.trim().length === 0) {
-                finalContent = title || 'Untitled document';
             }
 
             const finalDepartment = department || user?.department || 'General';
@@ -539,7 +537,7 @@ const DocumentUpload = ({ onUploadComplete, onCancel }) => {
                             </Grid>
                             <Grid item xs={12}>
                                 <Typography variant="caption" color="text.secondary">Content Length</Typography>
-                                <Typography variant="body2">{content.length} characters</Typography>
+                                <Typography variant="body2">{content.length > 0 ? `${content.length} characters` : (files.length > 0 ? `Ready (${(files[0].size / 1024).toFixed(2)} KB)` : '0 characters')}</Typography>
                             </Grid>
                         </Grid>
                     </Paper>
@@ -575,7 +573,7 @@ const DocumentUpload = ({ onUploadComplete, onCancel }) => {
                     ) : (
                         <Button
                             variant="contained" onClick={handleUpload}
-                            disabled={uploading || !title || !content}
+                            disabled={uploading || !title || (!content && files.length === 0)}
                             startIcon={uploading ? <CircularProgress size={16} /> : <UploadIcon />}
                         >
                             {uploading ? 'Uploading...' : 'Upload Document'}

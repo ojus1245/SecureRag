@@ -408,13 +408,38 @@ class DocumentService {
     /**
      * Handle API errors
      */
+        async toggleFavorite(documentId) {
+        try {
+            const response = await this.api.post(`/api/documents/${documentId}/favorite`);
+            return response.data;
+        } catch (error) {
+            logger.error('Failed to toggle favorite:', error);
+            throw this.handleError(error);
+        }
+    }
+
+    async toggleArchive(documentId) {
+        try {
+            const response = await this.api.post(`/api/documents/${documentId}/archive`);
+            return response.data;
+        } catch (error) {
+            logger.error('Failed to toggle archive:', error);
+            throw this.handleError(error);
+        }
+    }
+
     handleError(error) {
         if (error.response) {
             const { status, data } = error.response;
 
             switch (status) {
-                case 400:
+                case 400: {
+                    if (data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
+                        const detailMsg = data.errors.map(e => `${e.field || e.param}: ${e.message || e.msg}`).join(', ');
+                        return new Error(`Validation failed: ${detailMsg}`);
+                    }
                     return new Error(data.message || 'Invalid request');
+                }
                 case 401:
                     console.error('🔴 401 AUTH ERROR:', data);
                     return new Error(

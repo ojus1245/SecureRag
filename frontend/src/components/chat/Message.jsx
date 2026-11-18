@@ -221,6 +221,18 @@ const Message = memo(({
             </Tooltip>
           )}
 
+          {isAssistant && message.confidence !== undefined && message.confidence !== null && (
+            <Tooltip title={`RAG Semantic Confidence: ${(message.confidence * 100).toFixed(0)}%`}>
+              <Chip
+                label={`${(message.confidence * 100).toFixed(0)}% confidence`}
+                size="small"
+                color={message.confidence >= 0.75 ? "success" : message.confidence >= 0.5 ? "warning" : "default"}
+                variant="outlined"
+                sx={{ height: 18, fontSize: '0.65rem', fontWeight: 600 }}
+              />
+            </Tooltip>
+          )}
+
           {/* Actions */}
           <Box sx={{
             display: 'flex',

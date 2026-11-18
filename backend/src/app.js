@@ -18,6 +18,7 @@ const documentRoutes = require('./routes/document.routes');
 const chatRoutes = require('./routes/chat.routes');
 const userRoutes = require('./routes/user.routes');
 const auditRoutes = require('./routes/audit.routes');
+const adminRoutes = require('./routes/admin.routes');
 
 // Create Express app
 const app = express();
@@ -114,6 +115,7 @@ app.use(`${config.apiPrefix}/documents`, documentRoutes);
 app.use(`${config.apiPrefix}/chat`, chatRoutes);
 app.use(`${config.apiPrefix}/users`, userRoutes);
 app.use(`${config.apiPrefix}/audit`, auditRoutes);
+app.use(`${config.apiPrefix}/admin`, adminRoutes);
 
 /**
  * Health Check Endpoint

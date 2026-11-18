@@ -1,4 +1,5 @@
 import React, { useState, memo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Chip,
@@ -16,19 +17,26 @@ import {
 import { formatTimestamp } from '../../utils/helpers';
 
 const Citation = memo(({ citation, onOpen }) => {
+  const navigate = useNavigate();
   const [anchorEl, setAnchorEl] = useState(null);
   const [hovered, setHovered] = useState(false);
 
   const {
     id,
     number,
-    document_id: documentId,
+    document_id,
+    documentId: rawDocId,
     title,
     style = 'inline',
     text,
-    relevance_score: relevanceScore,
+    snippet,
+    relevance_score,
+    relevanceScore: rawRelScore,
     metadata = {}
   } = citation;
+
+  const docId = document_id || rawDocId || (metadata && metadata.documentId);
+  const relevance = relevance_score !== undefined ? relevance_score : rawRelScore;
 
   const handleClick = (event) => {
     setAnchorEl(event.currentTarget);
@@ -42,14 +50,21 @@ const Citation = memo(({ citation, onOpen }) => {
     handleClose();
     if (onOpen) {
       onOpen(citation);
+    } else if (docId) {
+      navigate(`/documents/${docId}`, {
+        state: {
+          highlightText: snippet || text || title,
+          snippet: snippet
+        }
+      });
     }
   };
 
-  const citationText = text || `[${number}]`;
+  const citationText = text || title || `[${number}]`;
 
   return (
     <>
-      <Tooltip title={title || `Citation ${number}`}>
+      <Tooltip title={`Click to inspect citation & jump to direct mention in: ${title || 'Document'}`}>
         <Chip
           icon={<QuoteIcon sx={{ fontSize: 14 }} />}
           label={citationText}
@@ -59,6 +74,7 @@ const Citation = memo(({ citation, onOpen }) => {
           onMouseLeave={() => setHovered(false)}
           sx={{
             cursor: 'pointer',
+            maxWidth: 260,
             bgcolor: hovered ? 'primary.light' : 'action.hover',
             '&:hover': {
               bgcolor: 'primary.light'
@@ -81,14 +97,14 @@ const Citation = memo(({ citation, onOpen }) => {
           horizontal: 'center'
         }}
       >
-        <Paper sx={{ p: 2, maxWidth: 300 }}>
+        <Paper sx={{ p: 2, maxWidth: 360 }}>
           <Box sx={{
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'flex-start',
             mb: 1
           }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'primary.main' }}>
               {title || `Citation ${number}`}
             </Typography>
             <IconButton size="small" onClick={handleClose}>
@@ -96,23 +112,36 @@ const Citation = memo(({ citation, onOpen }) => {
             </IconButton>
           </Box>
 
+          {/* Direct Mention snippet if available */}
+          {snippet && (
+            <Paper
+              variant="outlined"
+              sx={{
+                p: 1.5,
+                mb: 1.5,
+                bgcolor: 'background.default',
+                borderLeft: 3,
+                borderColor: 'primary.main',
+                fontStyle: 'italic',
+                fontSize: '0.8rem',
+                lineHeight: 1.5
+              }}
+            >
+              "{snippet}"
+            </Paper>
+          )}
+
           {/* Citation details */}
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-            {documentId && (
+            {docId && (
               <Typography variant="caption" color="text.secondary">
-                Document ID: {documentId}
+                Document ID: {docId}
               </Typography>
             )}
 
-            {relevanceScore !== undefined && (
-              <Typography variant="caption" color="text.secondary">
-                Relevance: {(relevanceScore * 100).toFixed(1)}%
-              </Typography>
-            )}
-
-            {metadata.author && (
-              <Typography variant="caption" color="text.secondary">
-                Author: {metadata.author}
+            {relevance !== undefined && (
+              <Typography variant="caption" sx={{ fontWeight: 600, color: 'success.main' }}>
+                Relevance Confidence: {(relevance * 100).toFixed(1)}%
               </Typography>
             )}
 
@@ -124,26 +153,28 @@ const Citation = memo(({ citation, onOpen }) => {
 
             {metadata.classification && (
               <Typography variant="caption" color="text.secondary">
-                Classification: {metadata.classification}
+                Classification: {metadata.classification.toUpperCase()}
               </Typography>
             )}
 
             {metadata.created_at && (
               <Typography variant="caption" color="text.secondary">
-                Created: {formatTimestamp(metadata.created_at)}
+                Indexed: {formatTimestamp(metadata.created_at)}
               </Typography>
             )}
           </Box>
 
           {/* Open document button */}
-          <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end' }}>
+          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
             <Chip
               icon={<OpenInNewIcon />}
-              label="Open Document"
+              label="Go to Direct Mention in Document"
               size="small"
               onClick={handleOpenDocument}
               color="primary"
-              variant="outlined"
+              variant="filled"
+              clickable
+              sx={{ fontWeight: 600 }}
             />
           </Box>
         </Paper>

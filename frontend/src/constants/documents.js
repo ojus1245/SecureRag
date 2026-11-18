@@ -82,17 +82,17 @@ export const FILE_TYPE_OPTIONS = [
 export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 export const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50MB for batch uploads
 
-// Allowed MIME Types
-export const ALLOWED_MIME_TYPES = [
-  'application/pdf',
-  'text/plain',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'text/markdown',
-  'text/html',
-  'text/csv',
-  'application/json'
-];
+// Allowed MIME Types for react-dropzone v14
+export const ALLOWED_MIME_TYPES = {
+  'application/pdf': ['.pdf'],
+  'text/plain': ['.txt'],
+  'application/msword': ['.doc'],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+  'text/markdown': ['.md'],
+  'text/html': ['.html', '.htm'],
+  'text/csv': ['.csv'],
+  'application/json': ['.json']
+};
 
 // File Extension to MIME Type Mapping
 export const FILE_EXTENSION_MIME_MAP = {

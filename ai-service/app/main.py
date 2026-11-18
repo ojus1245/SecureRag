@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 """
 Secure Enterprise RAG Knowledge Base - AI Service
 Main FastAPI Application

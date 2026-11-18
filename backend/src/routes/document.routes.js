@@ -39,13 +39,17 @@ const fileFilter = (req, file, cb) => {
     'text/plain',
     'text/markdown',
     'text/html',
-    'application/json'
+    'application/json',
+    'application/octet-stream'
   ];
 
-  if (allowedTypes.includes(file.mimetype)) {
+  const ext = path.extname(file.originalname).toLowerCase();
+  const allowedExts = ['.pdf', '.doc', '.docx', '.txt', '.md', '.html', '.json', '.csv'];
+
+  if (allowedTypes.includes(file.mimetype) || allowedExts.includes(ext)) {
     cb(null, true);
   } else {
-    cb(new Error('Invalid file type. Allowed: PDF, DOC, DOCX, TXT, MD, HTML, JSON'), false);
+    cb(new Error('Invalid file type. Allowed: PDF, DOC, DOCX, TXT, MD, HTML, JSON, CSV'), false);
   }
 };
 
@@ -91,9 +95,18 @@ const uploadDocumentValidation = [
     .withMessage('Title must be between 3 and 200 characters'),
 
   body('content')
-    .optional()
-    .isLength({ min: 1 })
-    .withMessage('Content is required when not uploading a file'),
+    .optional({ checkFalsy: true })
+    .custom((value, { req }) => {
+      // If a file is uploaded (PDF, DOCX, TXT, etc.), content can be empty because backend extracts text from the buffer
+      if (req.file) {
+        return true;
+      }
+      // If no file was attached, content must not be empty
+      if (!value || typeof value !== 'string' || value.trim().length === 0) {
+        throw new Error('Content is required when not uploading a file');
+      }
+      return true;
+    }),
 
   body('department')
     .trim()
@@ -336,6 +349,24 @@ router.get(
   checkDocumentAccess,
   checkDocumentPermission('download'),
   documentController.downloadDocument
+);
+
+// ============================================
+// Archive & Favorite Routes
+// ============================================
+
+router.post(
+  '/:documentId/archive',
+  authorize('document:update', 'document:delete'),
+  checkDocumentAccess,
+  documentController.toggleArchive
+);
+
+router.post(
+  '/:documentId/favorite',
+  authorize('document:read'),
+  checkDocumentAccess,
+  documentController.toggleFavorite
 );
 
 module.exports = router;

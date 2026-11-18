@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
     Box,
     Paper,
@@ -32,10 +32,12 @@ import { chatService } from '../services/chatService';
 import { useAuth } from '../hooks/useAuth';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { formatDate } from '../utils/helpers';
+import { eventBus } from '../utils/eventBus';
 
 const Chat = () => {
     const { conversationId } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const { user } = useAuth();
 
     const [conversations, setConversations] = useState([]);
@@ -45,7 +47,6 @@ const Chat = () => {
     const [activeTab, setActiveTab] = useState(0);
     const [selectedConversation, setSelectedConversation] = useState(conversationId);
 
-    // FIXED: use import.meta.env instead of process.env
     const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:5000/ws';
     const { connectionStatus, sendMessage: wsSend } = useWebSocket(wsUrl);
 
@@ -55,29 +56,64 @@ const Chat = () => {
 
         try {
             const result = await chatService.getConversations();
-            setConversations(result?.conversations || []);
+            const fetched = result?.conversations || [];
+            setConversations(prev => {
+                // If there's an active unsaved conversation, keep it in the list
+                if (selectedConversation && !fetched.some(c => (c.id || c._id) === selectedConversation)) {
+                    const fallbackTitle = location.state?.documentTitle 
+                        ? `Chat: ${location.state.documentTitle}` 
+                        : 'New Conversation';
+                    return [{ id: selectedConversation, title: fallbackTitle, updatedAt: new Date().toISOString() }, ...fetched];
+                }
+                return fetched;
+            });
         } catch (error) {
             console.error('Failed to fetch conversations:', error);
             setError('Failed to load conversations');
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [selectedConversation, location.state]);
 
     useEffect(() => {
         fetchConversations();
-    }, [fetchConversations]);
+    }, []);
 
     useEffect(() => {
         if (conversationId) {
             setSelectedConversation(conversationId);
+            setConversations(prev => {
+                if (prev.some(c => (c.id || c._id) === conversationId)) {
+                    return prev;
+                }
+                const fallbackTitle = location.state?.documentTitle 
+                    ? `Chat: ${location.state.documentTitle}` 
+                    : 'New Conversation';
+                return [{ id: conversationId, title: fallbackTitle, updatedAt: new Date().toISOString() }, ...prev];
+            });
         }
-    }, [conversationId]);
+    }, [conversationId, location.state]);
+
+    // Listen for sent messages to update conversations list
+    useEffect(() => {
+        const unsubscribe = eventBus.on('chat:message_sent', () => {
+            fetchConversations();
+        });
+        return () => {
+            if (typeof unsubscribe === 'function') unsubscribe();
+        };
+    }, [fetchConversations]);
 
     const handleNewConversation = () => {
         const newId = `conv-${Date.now()}`;
-        navigate(`/chat/${newId}`);
+        const newConv = {
+            id: newId,
+            title: 'New Conversation',
+            updatedAt: new Date().toISOString()
+        };
+        setConversations(prev => [newConv, ...prev.filter(c => (c.id || c._id) !== newId)]);
         setSelectedConversation(newId);
+        navigate(`/chat/${newId}`);
     };
 
     const handleSelectConversation = (conversation) => {
@@ -89,7 +125,7 @@ const Chat = () => {
     const handleDeleteConversation = async (id) => {
         try {
             await chatService.deleteConversation(id);
-            fetchConversations();
+            setConversations(prev => prev.filter(c => (c.id || c._id) !== id));
 
             if (selectedConversation === id) {
                 navigate('/chat');
@@ -159,7 +195,7 @@ const Chat = () => {
                     </Tabs>
 
                     <Box sx={{ flex: 1, overflow: 'auto' }}>
-                        {loading ? (
+                        {loading && conversations.length === 0 ? (
                             <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
                                 <CircularProgress />
                             </Box>
@@ -241,14 +277,14 @@ const Chat = () => {
                         justifyContent: 'center'
                     }}>
                         <Badge
-                            color={connectionStatus === 'connected' ? 'success' : 'error'}
+                            color={connectionStatus === 'connected' ? 'success' : connectionStatus === 'connecting' ? 'warning' : 'error'}
                             variant="dot"
                             sx={{ mr: 1 }}
                         >
                             <SecurityIcon />
                         </Badge>
                         <Typography variant="caption" color="text.secondary">
-                            {connectionStatus === 'connected' ? 'Connected' : 'Disconnected'}
+                            {connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting...' : 'Offline'}
                         </Typography>
                     </Box>
                 </Paper>
@@ -284,6 +320,9 @@ const Chat = () => {
                 <ChatWindow
                     conversationId={selectedConversation}
                     onConversationChange={setSelectedConversation}
+                    initialQuery={location.state?.initialQuery}
+                    targetDocumentId={location.state?.documentId}
+                    targetDocumentTitle={location.state?.documentTitle}
                 />
             </Box>
         </Box>

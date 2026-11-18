@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box,
     Paper,
@@ -22,11 +22,11 @@ import {
     MenuItem,
     ListItemIcon,
     ListItemText,
-    Divider,
     Button,
-    Alert,
     LinearProgress,
-    Skeleton
+    Skeleton,
+    Alert,
+    Divider
 } from '@mui/material';
 import {
     Search as SearchIcon,
@@ -39,20 +39,31 @@ import {
     FilterList as FilterListIcon,
     Sort as SortIcon,
     Security as SecurityIcon,
-    Description as DescriptionIcon
+    Description as DescriptionIcon,
+    Chat as ChatIcon,
+    Star as StarIcon,
+    StarBorder as StarBorderIcon,
+    Archive as ArchiveIcon,
+    Unarchive as UnarchiveIcon
 } from '@mui/icons-material';
 import { documentService } from '../../services/documentService';
 import { auditService } from '../../services/auditService';
+import { useAuth } from '../../hooks/useAuth';
 import SensitivityBadge from './SensitivityBadge';
 import { formatDate, formatFileSize } from '../../utils/helpers';
 
 const DocumentTable = ({
+    tab = 'all',
     onDocumentClick,
+    onChatDocument,
     onEditDocument,
     onShareDocument,
     onDeleteDocument,
-    onDownloadDocument
+    onDownloadDocument,
+    onToggleFavorite,
+    onToggleArchive
 }) => {
+    const { user } = useAuth();
     const [documents, setDocuments] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -72,15 +83,29 @@ const DocumentTable = ({
         setError(null);
 
         try {
-            const result = await documentService.getDocuments({
+            const params = {
                 page: page + 1,
                 limit: rowsPerPage,
                 search: searchTerm,
                 sortBy,
                 sortOrder
-            });
+            };
 
-            // Handle different response shapes
+            // Map frontend tab to backend query
+            if (tab === 'archived') {
+                params.status = 'archived';
+            } else if (tab === 'favorites') {
+                params.favorite = 'true';
+            } else if (tab === 'my') {
+                params.tab = 'my';
+            } else if (tab === 'shared') {
+                params.tab = 'shared';
+            } else {
+                params.status = 'published';
+            }
+
+            const result = await documentService.getDocuments(params);
+
             const docs = result?.documents || result || [];
             setDocuments(Array.isArray(docs) ? docs : []);
             setTotalDocuments(result?.pagination?.total || result?.total || docs.length || 0);
@@ -90,7 +115,7 @@ const DocumentTable = ({
         } finally {
             setLoading(false);
         }
-    }, [page, rowsPerPage, searchTerm, sortBy, sortOrder]);
+    }, [page, rowsPerPage, searchTerm, sortBy, sortOrder, tab]);
 
     useEffect(() => {
         fetchDocuments();
@@ -138,7 +163,6 @@ const DocumentTable = ({
 
     const handleActionMenuClose = () => {
         setActionMenu(null);
-        setActionDocument(null);
     };
 
     const handleFilterMenuOpen = (event) => {
@@ -172,9 +196,36 @@ const DocumentTable = ({
         }
     };
 
+    const handleInlineFavorite = async (e, doc) => {
+        e.stopPropagation();
+        const docId = doc.id || doc._id;
+        try {
+            await documentService.toggleFavorite(docId);
+            fetchDocuments();
+            if (onToggleFavorite) onToggleFavorite(doc);
+        } catch (err) {
+            console.error('Failed to toggle favorite:', err);
+        }
+    };
+
+    const handleInlineArchive = async (e, doc) => {
+        e.stopPropagation();
+        const docId = doc.id || doc._id;
+        try {
+            await documentService.toggleArchive(docId);
+            fetchDocuments();
+            if (onToggleArchive) onToggleArchive(doc);
+        } catch (err) {
+            console.error('Failed to toggle archive:', err);
+        }
+    };
+
     const isSelected = (id) => selected.indexOf(id) !== -1;
 
+    const currentUserId = user?.id || user?._id;
+
     const columns = [
+        { id: 'favorite', label: '', minWidth: 40 },
         { id: 'title', label: 'Title', minWidth: 200 },
         { id: 'classification', label: 'Classification', minWidth: 120 },
         { id: 'department', label: 'Department', minWidth: 120 },
@@ -192,10 +243,10 @@ const DocumentTable = ({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                borderBottom: 1,
-                borderColor: 'divider'
+                flexWrap: 'wrap',
+                gap: 2
             }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <TextField
                         size="small"
                         placeholder="Search documents..."
@@ -260,7 +311,7 @@ const DocumentTable = ({
                                     key={column.id}
                                     style={{ minWidth: column.minWidth }}
                                 >
-                                    {column.id !== 'actions' && column.id !== 'tags' ? (
+                                    {column.id !== 'actions' && column.id !== 'tags' && column.id !== 'favorite' ? (
                                         <TableSortLabel
                                             active={sortBy === column.id}
                                             direction={sortBy === column.id ? sortOrder : 'asc'}
@@ -293,19 +344,48 @@ const DocumentTable = ({
                         ) : documents.length === 0 ? (
                             <TableRow key="empty-row">
                                 <TableCell colSpan={columns.length + 1} align="center">
-                                    <Box sx={{ py: 4 }}>
-                                        <DescriptionIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
-                                        <Typography variant="body1" color="text.secondary">
-                                            No documents found
-                                        </Typography>
+                                    <Box sx={{ py: 6, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                        {tab === 'archived' ? (
+                                            <>
+                                                <ArchiveIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1.5 }} />
+                                                <Typography variant="h6" color="text.secondary">
+                                                    No archived documents
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    Documents you archive will appear here safely stored away from the active list.
+                                                </Typography>
+                                            </>
+                                        ) : tab === 'favorites' ? (
+                                            <>
+                                                <StarIcon sx={{ fontSize: 48, color: 'warning.main', mb: 1.5 }} />
+                                                <Typography variant="h6" color="text.secondary">
+                                                    No favorite documents
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    Click the star icon on any document to add it to your quick-access favorites.
+                                                </Typography>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <DescriptionIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1.5 }} />
+                                                <Typography variant="h6" color="text.secondary">
+                                                    No documents found
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    Upload your first document or refine your search query.
+                                                </Typography>
+                                            </>
+                                        )}
                                     </Box>
                                 </TableCell>
                             </TableRow>
                         ) : (
                             documents.map((document, index) => {
-                                // FIXED: Unique key per row
                                 const docId = document.id || document._id || `doc-${index}`;
                                 const isItemSelected = isSelected(docId);
+                                const isFav = Array.isArray(document.metadata?.favorites) && 
+                                    document.metadata.favorites.includes(currentUserId?.toString());
+                                const isArchived = document.status === 'archived';
 
                                 return (
                                     <TableRow
@@ -325,15 +405,33 @@ const DocumentTable = ({
                                             />
                                         </TableCell>
 
+                                        {/* Favorite star */}
+                                        <TableCell sx={{ width: 40, p: 0.5 }}>
+                                            <Tooltip title={isFav ? 'Remove from favorites' : 'Add to favorites'}>
+                                                <IconButton
+                                                    size="small"
+                                                    onClick={(e) => handleInlineFavorite(e, document)}
+                                                    sx={{ color: isFav ? 'warning.main' : 'text.disabled' }}
+                                                >
+                                                    {isFav ? <StarIcon fontSize="small" /> : <StarBorderIcon fontSize="small" />}
+                                                </IconButton>
+                                            </Tooltip>
+                                        </TableCell>
+
                                         <TableCell>
                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                <DescriptionIcon color="primary" sx={{ fontSize: 20 }} />
+                                                <DescriptionIcon color={isArchived ? 'disabled' : 'primary'} sx={{ fontSize: 20 }} />
                                                 <Box>
-                                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                                        {document.title}
-                                                    </Typography>
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                                            {document.title}
+                                                        </Typography>
+                                                        {isArchived && (
+                                                            <Chip label="Archived" size="small" color="warning" variant="outlined" sx={{ height: 20, fontSize: '0.65rem' }} />
+                                                        )}
+                                                    </Box>
                                                     <Typography variant="caption" color="text.secondary">
-                                                        v{document.version || 1} • {formatFileSize(document.fileSize || 0)}
+                                                        v{document.version || 1} • {formatFileSize(document.fileSize || 0)} • {document.fileType?.toUpperCase() || 'TXT'}
                                                     </Typography>
                                                 </Box>
                                             </Box>
@@ -442,24 +540,76 @@ const DocumentTable = ({
                 open={Boolean(actionMenu)}
                 onClose={handleActionMenuClose}
             >
-                <MenuItem onClick={() => { onDocumentClick?.(actionDocument); handleActionMenuClose(); }}>
-                    <ListItemIcon><VisibilityIcon fontSize="small" /></ListItemIcon>
-                    <ListItemText>View</ListItemText>
+                <MenuItem onClick={() => {
+                    const doc = actionDocument;
+                    handleActionMenuClose();
+                    if (doc) onDocumentClick?.(doc);
+                }}>
+                    <ListItemIcon><VisibilityIcon fontSize="small" color="primary" /></ListItemIcon>
+                    <ListItemText>View Document</ListItemText>
                 </MenuItem>
-                <MenuItem onClick={() => { onEditDocument?.(actionDocument); handleActionMenuClose(); }}>
+                <MenuItem onClick={() => {
+                    const doc = actionDocument;
+                    handleActionMenuClose();
+                    if (doc) onChatDocument?.(doc);
+                }}>
+                    <ListItemIcon><ChatIcon fontSize="small" color="secondary" /></ListItemIcon>
+                    <ListItemText sx={{ fontWeight: 600 }}>Chat with Document</ListItemText>
+                </MenuItem>
+                <MenuItem onClick={(e) => {
+                    const doc = actionDocument;
+                    handleActionMenuClose();
+                    if (doc) handleInlineFavorite(e, doc);
+                }}>
+                    <ListItemIcon><StarIcon fontSize="small" color="warning" /></ListItemIcon>
+                    <ListItemText>
+                        {actionDocument?.metadata?.favorites?.includes(currentUserId?.toString())
+                            ? 'Remove Favorite'
+                            : 'Add to Favorites'}
+                    </ListItemText>
+                </MenuItem>
+                <MenuItem onClick={(e) => {
+                    const doc = actionDocument;
+                    handleActionMenuClose();
+                    if (doc) handleInlineArchive(e, doc);
+                }}>
+                    <ListItemIcon>
+                        {actionDocument?.status === 'archived' ? <UnarchiveIcon fontSize="small" /> : <ArchiveIcon fontSize="small" />}
+                    </ListItemIcon>
+                    <ListItemText>
+                        {actionDocument?.status === 'archived' ? 'Unarchive' : 'Archive'}
+                    </ListItemText>
+                </MenuItem>
+                <MenuItem onClick={() => {
+                    const doc = actionDocument;
+                    handleActionMenuClose();
+                    if (doc) onEditDocument?.(doc);
+                }}>
                     <ListItemIcon><EditIcon fontSize="small" /></ListItemIcon>
                     <ListItemText>Edit</ListItemText>
                 </MenuItem>
-                <MenuItem onClick={() => { onShareDocument?.(actionDocument); handleActionMenuClose(); }}>
+                <MenuItem onClick={() => {
+                    const doc = actionDocument;
+                    handleActionMenuClose();
+                    if (doc) onShareDocument?.(doc);
+                }}>
                     <ListItemIcon><ShareIcon fontSize="small" /></ListItemIcon>
                     <ListItemText>Share</ListItemText>
                 </MenuItem>
-                <MenuItem onClick={() => { onDownloadDocument?.(actionDocument); handleActionMenuClose(); }}>
+                <MenuItem onClick={() => {
+                    const doc = actionDocument;
+                    handleActionMenuClose();
+                    if (doc) onDownloadDocument?.(doc);
+                }}>
                     <ListItemIcon><DownloadIcon fontSize="small" /></ListItemIcon>
                     <ListItemText>Download</ListItemText>
                 </MenuItem>
                 <Divider />
-                <MenuItem onClick={() => { onDeleteDocument?.(actionDocument); handleActionMenuClose(); }}>
+                <MenuItem onClick={() => {
+                    const doc = actionDocument;
+                    handleActionMenuClose();
+                    if (doc) onDeleteDocument?.(doc);
+                }}>
                     <ListItemIcon><DeleteIcon fontSize="small" color="error" /></ListItemIcon>
                     <ListItemText sx={{ color: 'error.main' }}>Delete</ListItemText>
                 </MenuItem>

@@ -20,6 +20,16 @@ const checkDocumentAccess = async (req, res, next) => {
       });
     }
 
+    // Validate valid MongoDB ObjectId before querying
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(documentId)) {
+      return res.status(404).json({
+        success: false,
+        message: 'Document not found.',
+        code: 'ACL_DOCUMENT_NOT_FOUND'
+      });
+    }
+
     // Get document
     const document = await Document.findById(documentId)
       .populate('owner', 'username email fullName department');

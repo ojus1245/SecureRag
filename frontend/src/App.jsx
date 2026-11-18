@@ -39,6 +39,8 @@ const AuditLogs = lazy(() => import('./pages/AuditLogs'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Profile = lazy(() => import('./pages/Profile'));
+const History = lazy(() => import('./pages/History'));
+const Analytics = lazy(() => import('./pages/Analytics'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 // Loading component
@@ -69,6 +71,7 @@ class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     logger.error('Application error:', error, errorInfo);
+    console.error('ErrorBoundary caught:', error, errorInfo);
   }
 
   render() {
@@ -79,21 +82,42 @@ class ErrorBoundary extends React.Component {
           flexDirection: 'column',
           justifyContent: 'center',
           alignItems: 'center',
-          height: '100vh',
-          padding: '20px',
-          textAlign: 'center'
+          minHeight: '100vh',
+          padding: '24px',
+          textAlign: 'center',
+          backgroundColor: '#0a0f1d',
+          color: '#e2e8f0',
+          fontFamily: 'system-ui, sans-serif'
         }}>
-          <h1>Something went wrong</h1>
-          <p>We apologize for the inconvenience. Please try refreshing the page.</p>
+          <h1 style={{ color: '#ef4444', marginBottom: '8px' }}>Something went wrong</h1>
+          <p style={{ color: '#94a3b8', marginBottom: '16px' }}>We apologize for the inconvenience. Please try refreshing the page.</p>
+          <pre style={{
+            margin: '16px 0',
+            padding: '16px',
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            color: '#f87171',
+            borderRadius: '8px',
+            maxWidth: '85vw',
+            overflowX: 'auto',
+            textAlign: 'left',
+            fontSize: '12px',
+            lineHeight: 1.5,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word'
+          }}>
+            {String(this.state.error?.stack || this.state.error?.message || this.state.error || 'Unknown error occurred')}
+          </pre>
           <button
             onClick={() => window.location.reload()}
             style={{
-              padding: '10px 20px',
+              padding: '10px 24px',
               backgroundColor: '#1976d2',
               color: 'white',
               border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: 600
             }}
           >
             Refresh Page
@@ -342,7 +366,16 @@ const AppContent = () => {
                             path="/history"
                             element={
                               <ProtectedRoute requiredPermissions={['chat:history']}>
-                                <Chat />
+                                <History />
+                              </ProtectedRoute>
+                            }
+                          />
+
+                          <Route
+                            path="/analytics"
+                            element={
+                              <ProtectedRoute requiredPermissions={['audit:view']}>
+                                <Analytics />
                               </ProtectedRoute>
                             }
                           />

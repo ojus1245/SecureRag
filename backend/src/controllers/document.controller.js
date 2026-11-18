@@ -9,8 +9,11 @@ const auditService = require('../services/audit.service');
 
 const logger = require('../utils/logger');
 const fs = require('fs');
+const path = require('path');
 const csv = require('csv-parser');
 const axios = require('axios');
+const mammoth = require('mammoth');
+const pdfParse = require('pdf-parse');
 
 class DocumentController {
   /**
@@ -59,6 +62,49 @@ class DocumentController {
       console.log('Classification:', classification);
       console.log('Tags:', tags);
       console.log('Metadata keys:', Object.keys(metadata));
+
+      // If content is empty but a file was uploaded, extract text from file
+      if (req.file) {
+        try {
+          const rawBuf = fs.readFileSync(req.file.path);
+          const ext = path.extname(req.file.originalname).toLowerCase();
+          let extractedText = '';
+
+          if (['.txt', '.md', '.json', '.html', '.csv'].includes(ext)) {
+            extractedText = rawBuf.toString('utf8');
+            fileType = ext.replace('.', '');
+          } else if (ext === '.pdf') {
+            try {
+              const pdfResult = await pdfParse(rawBuf);
+              extractedText = pdfResult.text || '';
+              fileType = 'pdf';
+              console.log(`Extracted ${extractedText.length} chars from PDF: ${req.file.originalname}`);
+            } catch (pdfErr) {
+              console.error('PDF parsing error:', pdfErr.message);
+            }
+          } else if (['.docx', '.doc'].includes(ext)) {
+            try {
+              const mammothResult = await mammoth.extractRawText({ buffer: rawBuf });
+              extractedText = mammothResult.value || '';
+              fileType = ext.replace('.', '');
+              console.log(`Extracted ${extractedText.length} chars from Word doc via mammoth: ${req.file.originalname}`);
+            } catch (docErr) {
+              console.error('Word extraction error:', docErr.message);
+            }
+          }
+
+          // If extractedText found, use it unless user explicitly provided custom content
+          if (extractedText && extractedText.trim().length > 0) {
+            // Clean up excessive whitespace
+            content = extractedText.trim();
+          } else if (!content || content.trim().length === 0) {
+            content = `Document: ${req.file.originalname} (${(req.file.size / 1024).toFixed(2)} KB)`;
+          }
+        } catch (e) {
+          console.error('File parsing error:', e);
+          if (!content) content = `Document: ${req.file.originalname}`;
+        }
+      }
 
       // Validate required fields
       if (!title || !content) {
@@ -499,9 +545,11 @@ class DocumentController {
       res.status(200).json({
         success: true,
         data: {
-          id: document._id,
+          id: document._id.toString(),
+          _id: document._id.toString(),
           title: document.title,
-          content: decryptedContent,
+          content: decryptedContent || document.content || '',
+          fileSize: document.fileSize,
           department: document.department,
           classification: document.classification,
           tags: document.tags,
@@ -538,11 +586,33 @@ class DocumentController {
         classification,
         tags,
         owner,
+        status,
+        favorite,
+        tab,
         sortBy = 'createdAt',
         sortOrder = 'desc'
       } = req.query;
 
       const filter = {};
+      if (status) {
+        filter.status = status;
+      } else if (tab === 'archived') {
+        filter.status = 'archived';
+      } else {
+        // By default, exclude archived and deleted from main views
+        filter.status = { $nin: ['deleted', 'archived'] };
+      }
+
+      // Tab specific filters
+      if (tab === 'my') {
+        filter.owner = req.user._id;
+      } else if (tab === 'favorites') {
+        filter['metadata.favorites'] = req.user._id.toString();
+      }
+
+      if (favorite === 'true') {
+        filter['metadata.favorites'] = req.user._id.toString();
+      }
       const pageNum = parseInt(page);
       const limitNum = parseInt(limit);
 
@@ -617,7 +687,11 @@ class DocumentController {
       res.status(200).json({
         success: true,
         data: {
-          documents,
+          documents: documents.map(doc => ({
+            ...doc,
+            id: doc._id.toString(),
+            _id: doc._id.toString()
+          })),
           pagination: {
             page: pageNum,
             limit: limitNum,
@@ -641,18 +715,21 @@ class DocumentController {
    */
   async getDocumentStats(req, res) {
     try {
-      const totalDocuments = await Document.countDocuments();
-      const confidentialCount = await Document.countDocuments({ classification: 'confidential' });
-      const restrictedCount = await Document.countDocuments({ classification: 'restricted' });
-      const internalCount = await Document.countDocuments({ classification: 'internal' });
-      const publicCount = await Document.countDocuments({ classification: 'public' });
+      const baseFilter = { status: { $ne: 'deleted' } };
+      const totalDocuments = await Document.countDocuments(baseFilter);
+      const confidentialCount = await Document.countDocuments({ ...baseFilter, classification: 'confidential' });
+      const restrictedCount = await Document.countDocuments({ ...baseFilter, classification: 'restricted' });
+      const internalCount = await Document.countDocuments({ ...baseFilter, classification: 'internal' });
+      const publicCount = await Document.countDocuments({ ...baseFilter, classification: 'public' });
 
       const sizeAgg = await Document.aggregate([
+        { $match: { status: { $ne: 'deleted' } } },
         { $group: { _id: null, totalSize: { $sum: '$fileSize' } } }
       ]);
       const totalSize = sizeAgg[0]?.totalSize || 0;
 
       const byDepartment = await Document.aggregate([
+        { $match: { status: { $ne: 'deleted' } } },
         { $group: { _id: '$department', count: { $sum: 1 } } }
       ]);
 
@@ -1055,6 +1132,79 @@ class DocumentController {
     } catch (error) {
       logger.error('Batch update classification error:', error);
       res.status(500).json({ success: false, message: 'Failed to batch update classification' });
+    }
+  }
+
+  /**
+   * @desc    Toggle archive status of a document
+   * @route   POST /api/documents/:documentId/archive
+   * @access  Private
+   */
+  async toggleArchive(req, res) {
+    try {
+      const document = req.document;
+      const isArchived = document.status === 'archived';
+      document.status = isArchived ? 'published' : 'archived';
+      document.metadata = {
+        ...document.metadata,
+        archivedAt: isArchived ? null : new Date().toISOString(),
+        archivedBy: isArchived ? null : req.user._id
+      };
+      await document.save();
+
+      res.status(200).json({
+        success: true,
+        message: isArchived ? 'Document unarchived successfully' : 'Document archived successfully',
+        data: {
+          id: document._id.toString(),
+          status: document.status
+        }
+      });
+    } catch (error) {
+      logger.error('Toggle archive error:', error);
+      res.status(500).json({ success: false, message: 'Failed to update archive status' });
+    }
+  }
+
+  /**
+   * @desc    Toggle favorite status of a document for current user
+   * @route   POST /api/documents/:documentId/favorite
+   * @access  Private
+   */
+  async toggleFavorite(req, res) {
+    try {
+      const document = req.document;
+      const userId = req.user._id.toString();
+      const currentFavorites = Array.isArray(document.metadata?.favorites) 
+        ? document.metadata.favorites 
+        : [];
+
+      const isFav = currentFavorites.includes(userId);
+      let updatedFavorites;
+      if (isFav) {
+        updatedFavorites = currentFavorites.filter(id => id !== userId);
+      } else {
+        updatedFavorites = [...currentFavorites, userId];
+      }
+
+      document.metadata = {
+        ...document.metadata,
+        favorites: updatedFavorites
+      };
+      document.markModified('metadata');
+      await document.save();
+
+      res.status(200).json({
+        success: true,
+        message: isFav ? 'Removed from favorites' : 'Added to favorites',
+        data: {
+          id: document._id.toString(),
+          isFavorite: !isFav
+        }
+      });
+    } catch (error) {
+      logger.error('Toggle favorite error:', error);
+      res.status(500).json({ success: false, message: 'Failed to update favorite status' });
     }
   }
 }

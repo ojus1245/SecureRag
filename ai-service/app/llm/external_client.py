@@ -7,6 +7,9 @@ import os
 from typing import Dict, Any, Optional, AsyncGenerator
 import httpx
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +20,7 @@ class ExternalLLMClient:
     def __init__(self, api_key: Optional[str] = None):
         # Prefer constructor arg, fall back to env
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+        self.model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
         self.timeout = 60
         self.max_retries = 2
@@ -45,61 +48,72 @@ class ExternalLLMClient:
                 "timestamp": datetime.now().isoformat()
             }
 
-        try:
-            url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
+        # Candidate models to try in order of preference
+        models_to_try = [self.model]
+        if "gemini-flash-lite-latest" not in models_to_try:
+            models_to_try.append("gemini-flash-lite-latest")
 
-            payload = {
-                "contents": [{
-                    "parts": [{"text": prompt}]
-                }],
-                "generationConfig": {
-                    "temperature": options.get("temperature", 0.7),
-                    "maxOutputTokens": options.get("max_tokens", 500)
-                }
-            }
+        last_error = None
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
-                data = response.json()
-
-            # Extract text from Gemini response
-            text = ""
+        for current_model in models_to_try:
             try:
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
-            except (KeyError, IndexError):
-                logger.warning(f"Unexpected Gemini response shape: {data}")
+                url = f"{self.base_url}/models/{current_model}:generateContent?key={self.api_key}"
 
-            elapsed = (datetime.now() - start_time).total_seconds()
-            logger.info(f"Gemini generation: {len(text)} chars in {elapsed:.2f}s")
+                payload = {
+                    "contents": [{
+                        "parts": [{"text": prompt}]
+                    }],
+                    "generationConfig": {
+                        "temperature": options.get("temperature", 0.7),
+                        "maxOutputTokens": options.get("max_tokens", 800)
+                    }
+                }
 
-            self.stats["successful_requests"] += 1
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(url, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
 
-            return {
-                "text": text.strip(),
-                "model": self.model,
-                "provider": "external",
-                "usage": {},
-                "confidence": 0.9,
-                "response_time": elapsed,
-                "timestamp": datetime.now().isoformat()
-            }
+                # Extract text from Gemini response
+                text = ""
+                try:
+                    text = data["candidates"][0]["content"]["parts"][0]["text"]
+                except (KeyError, IndexError):
+                    logger.warning(f"Unexpected Gemini response shape: {data}")
 
-        except Exception as e:
-            logger.error(f"Gemini generation failed: {str(e)}", exc_info=True)
-            self.stats["failed_requests"] += 1
-            return {
-                "text": "",
-                "error": str(e),
-                "provider": "external",
-                "response_time": (datetime.now() - start_time).total_seconds(),
-                "timestamp": datetime.now().isoformat()
-            }
+                elapsed = (datetime.now() - start_time).total_seconds()
+                logger.info(f"Gemini generation ({current_model}): {len(text)} chars in {elapsed:.2f}s")
+
+                self.stats["successful_requests"] += 1
+
+                return {
+                    "text": text.strip(),
+                    "model": current_model,
+                    "provider": "external",
+                    "usage": data.get("usageMetadata", {}),
+                    "confidence": 0.95,
+                    "response_time": elapsed,
+                    "timestamp": datetime.now().isoformat()
+                }
+
+            except Exception as e:
+                logger.warn(f"Gemini generation failed with model {current_model}: {str(e)}")
+                last_error = e
+
+        logger.error(f"All Gemini models failed: {str(last_error)}", exc_info=True)
+        self.stats["failed_requests"] += 1
+        return {
+            "text": "",
+            "error": str(last_error),
+            "provider": "external",
+            "response_time": (datetime.now() - start_time).total_seconds(),
+            "timestamp": datetime.now().isoformat()
+        }
 
     async def generate_stream(self,
                               prompt: str,
                               options: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
-        """Simple non-streaming wrapper (Gemini streaming is more complex)"""
+        """Simple non-streaming wrapper"""
         result = await self.generate(prompt, options)
         yield result.get("text", "")
 

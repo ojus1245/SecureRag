@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Role = require('../models/Role');
 const Document = require('../models/Document');
@@ -165,10 +166,16 @@ class UserController {
         });
       }
 
-      // Get role
+      // Get role (accepts roleId ObjectId or role name string)
+      const targetRole = roleId || req.body.role;
       let role;
-      if (roleId) {
-        role = await Role.findById(roleId);
+      if (targetRole) {
+        if (mongoose.Types.ObjectId.isValid(targetRole)) {
+          role = await Role.findById(targetRole);
+        }
+        if (!role) {
+          role = await Role.findOne({ name: targetRole.toString().toLowerCase() });
+        }
         if (!role) {
           return res.status(404).json({
             success: false,
@@ -262,15 +269,22 @@ class UserController {
       }
 
       // Update role if provided and requester is admin
-      if (roleId && req.user.role.name === 'admin') {
-        const role = await Role.findById(roleId);
+      const targetRole = roleId || req.body.role;
+      if (targetRole && req.user.role.name === 'admin') {
+        let role;
+        if (mongoose.Types.ObjectId.isValid(targetRole)) {
+          role = await Role.findById(targetRole);
+        }
+        if (!role) {
+          role = await Role.findOne({ name: targetRole.toString().toLowerCase() });
+        }
         if (!role) {
           return res.status(404).json({
             success: false,
             message: 'Role not found'
           });
         }
-        user.role = roleId;
+        user.role = role._id;
       }
 
       await user.save();

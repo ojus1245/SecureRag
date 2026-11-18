@@ -1,12 +1,11 @@
-// ============================================
-// FIXED: Removed curly braces to match `module.exports = new Service()`
-// ============================================
 const ragService = require('../services/rag.service');
 const aiService = require('../services/ai.service');
 const auditService = require('../services/audit.service');
+const Conversation = require('../models/Conversation');
 const logger = require('../utils/logger');
 const crypto = require('crypto');
 const axios = require('axios');
+const mongoose = require('mongoose');
 
 class ChatController {
   /**
@@ -93,8 +92,12 @@ class ChatController {
         conversationId, 
         maxResults = 5, 
         temperature = 0.7,
-        stream = false 
+        stream = false,
+        documentId = null,
+        specificDocumentId = null
       } = req.body;
+
+      const targetDocId = documentId || specificDocumentId;
 
       if (!query || query.trim().length < 3) {
         return res.status(400).json({
@@ -110,7 +113,16 @@ class ChatController {
         });
       }
 
-      const activeConversationId = conversationId || crypto.randomUUID();
+      const activeConversationId = conversationId || `conv-${Date.now()}`;
+
+      // Notify WebSocket subscribers about retrieval start
+      if (req.app.broadcastToChannel) {
+        req.app.broadcastToChannel(`conversation:${activeConversationId}`, {
+          type: 'retrieval_status',
+          status: 'retrieving',
+          message: 'Searching documents in knowledge base...'
+        });
+      }
 
       // Safety check
       let safetyCheck;
@@ -128,6 +140,13 @@ class ChatController {
         };
       } catch (safetyError) {
         safetyCheck = { safe: true, reason: 'Basic check passed', score: 0.9 };
+      }
+
+      if (req.app.broadcastToChannel) {
+        req.app.broadcastToChannel(`conversation:${activeConversationId}`, {
+          type: 'safety_check',
+          ...safetyCheck
+        });
       }
 
       if (!safetyCheck.safe) {
@@ -157,35 +176,27 @@ class ChatController {
       }
 
       // Retrieve documents
-      let retrievalResult;
+      let retrievalResult = { documents: [] };
       try {
         retrievalResult = await ragService.retrieveRelevantDocuments(
           query,
           req.user._id,
-          maxResults
+          maxResults,
+          targetDocId
         );
       } catch (retrievalError) {
-        logger.error('Document retrieval failed:', retrievalError);
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to retrieve relevant documents'
-        });
+        logger.warn('Document retrieval had issues, falling back to general AI generation:', retrievalError.message);
+        retrievalResult = { documents: [] };
       }
 
-      if (!retrievalResult || !retrievalResult.documents || retrievalResult.documents.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'No relevant documents found for your query',
-          suggestions: []
-        });
-      }
+      const docs = (retrievalResult && retrievalResult.documents) ? retrievalResult.documents : [];
 
       // Generate response
       let response;
       try {
         response = await aiService.generateResponse(
           query,
-          retrievalResult.documents,
+          docs,
           {
             userId: req.user._id,
             temperature,
@@ -195,10 +206,68 @@ class ChatController {
         );
       } catch (generationError) {
         logger.error('Response generation failed:', generationError);
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to generate response'
+        // Fallback response if generation encounters an issue
+        response = {
+          text: `I received your question: "${query}". However, the AI response service encountered a temporary error. If you have uploaded documents, please ensure they have been indexed.`,
+          citations: [],
+          confidence: 0.5
+        };
+      }
+
+      // Format sources
+      const sources = docs.map(doc => ({
+        id: doc._id || doc.id,
+        title: doc.title,
+        relevanceScore: doc.relevanceScore,
+        classification: doc.classification,
+        department: doc.department
+      }));
+
+      // Persist in MongoDB Conversation
+      try {
+        let conv = await Conversation.findOne({
+          $or: [
+            { id: activeConversationId },
+            { _id: mongoose.Types.ObjectId.isValid(activeConversationId) ? activeConversationId : null }
+          ],
+          userId: req.user._id
         });
+
+        const shortTitle = query.length > 40 ? query.substring(0, 37) + '...' : query;
+
+        if (!conv) {
+          conv = new Conversation({
+            id: activeConversationId,
+            userId: req.user._id,
+            title: shortTitle,
+            isActive: true,
+            messages: []
+          });
+        } else {
+          conv.isActive = true;
+        }
+
+        const userMsg = {
+          id: `msg-user-${Date.now()}`,
+          role: 'user',
+          content: query,
+          timestamp: new Date()
+        };
+
+        const asstMsg = {
+          id: `msg-asst-${Date.now()}`,
+          role: 'assistant',
+          content: response.text,
+          citations: response.citations || [],
+          sources: sources,
+          timestamp: new Date()
+        };
+
+        conv.messages.push(userMsg, asstMsg);
+        conv.updatedAt = new Date();
+        await conv.save();
+      } catch (convErr) {
+        logger.warn('Failed to persist conversation history:', convErr.message);
       }
 
       // Log audit
@@ -211,7 +280,7 @@ class ChatController {
           details: {
             query: query.substring(0, 200),
             conversationId: activeConversationId,
-            documentCount: retrievalResult.documents.length
+            documentCount: docs.length
           },
           status: 'success'
         });
@@ -228,13 +297,7 @@ class ChatController {
           text: response.text,
           response: response.text,
           citations: response.citations || [],
-          sources: retrievalResult.documents.map(doc => ({
-            id: doc._id,
-            title: doc.title,
-            relevanceScore: doc.relevanceScore,
-            classification: doc.classification,
-            department: doc.department
-          })),
+          sources: sources,
           confidence: response.confidence || null,
           timestamp: new Date().toISOString()
         }
@@ -257,14 +320,31 @@ class ChatController {
   async getHistory(req, res) {
     try {
       const { conversationId } = req.params;
-      
+
+      const conv = await Conversation.findOne({
+        $or: [
+          { id: conversationId },
+          { _id: mongoose.Types.ObjectId.isValid(conversationId) ? conversationId : null }
+        ],
+        userId: req.user._id
+      });
+
       res.status(200).json({
         success: true,
         data: {
           conversationId,
-          messages: [],
-          createdAt: null,
-          updatedAt: null
+          title: conv?.title || 'New Conversation',
+          messages: conv ? conv.messages.map(m => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            citations: m.citations || [],
+            sources: m.sources || [],
+            feedback: m.feedback,
+            timestamp: m.timestamp
+          })) : [],
+          createdAt: conv?.createdAt || null,
+          updatedAt: conv?.updatedAt || null
         }
       });
     } catch (error) {
@@ -285,15 +365,37 @@ class ChatController {
     try {
       const { page = 1, limit = 20 } = req.query;
 
+      const conversations = await Conversation.find({
+        userId: req.user._id,
+        isActive: { $ne: false }
+      })
+        .sort({ updatedAt: -1 })
+        .limit(parseInt(limit));
+
+      const total = await Conversation.countDocuments({
+        userId: req.user._id,
+        isActive: { $ne: false }
+      });
+
       res.status(200).json({
         success: true,
         data: {
-          conversations: [],
+          conversations: conversations.map(c => ({
+            id: c.id,
+            _id: c._id,
+            title: c.title,
+            messageCount: (c.messages || []).length,
+            lastMessage: c.messages && c.messages.length > 0
+              ? c.messages[c.messages.length - 1].content?.slice(0, 100)
+              : null,
+            createdAt: c.createdAt,
+            updatedAt: c.updatedAt
+          })),
           pagination: {
             page: parseInt(page),
             limit: parseInt(limit),
-            total: 0,
-            pages: 0
+            total,
+            pages: Math.ceil(total / parseInt(limit)) || 1
           }
         }
       });
@@ -359,6 +461,23 @@ class ChatController {
       }
 
       try {
+        await Conversation.updateOne(
+          {
+            $or: [
+              { id: conversationId },
+              { _id: mongoose.Types.ObjectId.isValid(conversationId) ? conversationId : null }
+            ],
+            'messages.id': messageId
+          },
+          {
+            $set: { 'messages.$.feedback': rating }
+          }
+        );
+      } catch (e) {
+        logger.warn('Failed to update feedback on message:', e.message);
+      }
+
+      try {
         await auditService.logEvent({
           userId: req.user._id,
           username: req.user.username,
@@ -392,6 +511,19 @@ class ChatController {
   async clearConversation(req, res) {
     try {
       const { conversationId } = req.params;
+
+      await Conversation.updateOne(
+        {
+          $or: [
+            { id: conversationId },
+            { _id: mongoose.Types.ObjectId.isValid(conversationId) ? conversationId : null }
+          ],
+          userId: req.user._id
+        },
+        {
+          $set: { isActive: false }
+        }
+      );
 
       logger.info(`Conversation cleared: ${conversationId} by ${req.user.username}`);
 

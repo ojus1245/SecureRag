@@ -84,7 +84,7 @@ const AccessControlEditor = ({ document, onSave, onClose }) => {
         setError(null);
 
         try {
-            const result = await documentService.getDocumentACL(document.id);
+            const result = await documentService.getDocumentACL((document.id || document._id));
             setAclEntries(result.shares || []);
         } catch (error) {
             console.error('Failed to fetch ACL:', error);
@@ -92,7 +92,7 @@ const AccessControlEditor = ({ document, onSave, onClose }) => {
         } finally {
             setLoading(false);
         }
-    }, [document.id]);
+    }, [(document.id || document._id)]);
 
     const searchUsers = async (query) => {
         try {
@@ -147,7 +147,7 @@ const AccessControlEditor = ({ document, onSave, onClose }) => {
         try {
             setLoading(true);
 
-            await documentService.shareDocument(document.id, {
+            await documentService.shareDocument((document.id || document._id), {
                 userId: selectedUser.id,
                 permissions,
                 expiresAt
@@ -161,7 +161,7 @@ const AccessControlEditor = ({ document, onSave, onClose }) => {
             await auditService.logEvent({
                 action: 'DOCUMENT_SHARE',
                 resourceType: 'document',
-                resourceId: document.id,
+                resourceId: (document.id || document._id),
                 details: {
                     sharedWith: selectedUser.id,
                     permissions,
@@ -179,7 +179,7 @@ const AccessControlEditor = ({ document, onSave, onClose }) => {
 
     const handleRevoke = async (aclEntry) => {
         try {
-            await documentService.revokeDocumentShare(document.id, aclEntry.user.id);
+            await documentService.revokeDocumentShare((document.id || document._id), aclEntry.user.id);
 
             setSuccess('Access revoked successfully');
             fetchACL();
@@ -188,7 +188,7 @@ const AccessControlEditor = ({ document, onSave, onClose }) => {
             await auditService.logEvent({
                 action: 'ACL_UPDATE',
                 resourceType: 'document',
-                resourceId: document.id,
+                resourceId: (document.id || document._id),
                 details: {
                     action: 'REVOKE',
                     userId: aclEntry.user.id
@@ -203,7 +203,7 @@ const AccessControlEditor = ({ document, onSave, onClose }) => {
 
     const handleUpdatePermissions = async (aclEntry, newPermissions) => {
         try {
-            await documentService.updateDocumentShare(document.id, aclEntry.user.id, {
+            await documentService.updateDocumentShare((document.id || document._id), aclEntry.user.id, {
                 permissions: newPermissions
             });
 

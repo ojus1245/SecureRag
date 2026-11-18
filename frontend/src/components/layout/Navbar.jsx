@@ -375,13 +375,19 @@ const Navbar = ({ onSidebarToggle, sidebarOpen }) => {
                         {user?.email}
                     </Typography>
                     {user?.securityClearance && (
-                        <Chip
-                            label={user.securityClearance.toUpperCase()}
-                            size="small"
-                            color={user.securityClearance === 'restricted' ? 'error' : 'primary'}
-                            variant="outlined"
-                            sx={{ mt: 0.5 }}
-                        />
+                        <Tooltip title={
+                            user.securityClearance === 'restricted'
+                                ? 'Top Tier Security Clearance (Full Enterprise Access)'
+                                : `Security Clearance: ${user.securityClearance}`
+                        }>
+                            <Chip
+                                label={`CLEARANCE: ${user.securityClearance.toUpperCase()}`}
+                                size="small"
+                                color="success"
+                                variant="outlined"
+                                sx={{ mt: 0.5 }}
+                            />
+                        </Tooltip>
                     )}
                 </Box>
 

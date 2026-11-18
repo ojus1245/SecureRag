@@ -208,9 +208,9 @@ const authSlice = createSlice({
             state.isAuthenticated = !!action.payload;
 
             if (action.payload) {
-                state.permissions = action.payload.role?.permissions || [];
+                state.permissions = action.payload.role?.permissions || action.payload.permissions || [];
                 state.securityClearance = action.payload.securityClearance;
-                state.role = action.payload.role?.name;
+                state.role = action.payload.role?.name || (typeof action.payload.role === "string" ? action.payload.role : null);
             }
         },
 
@@ -283,9 +283,9 @@ const authSlice = createSlice({
                 state.token = token;
                 state.refreshToken = refreshToken;
                 state.isAuthenticated = true;
-                state.permissions = user.role?.permissions || [];
+                state.permissions = user.role?.permissions || user.permissions || [];
                 state.securityClearance = user.securityClearance;
-                state.role = user.role?.name;
+                state.role = user.role?.name || (typeof user.role === "string" ? user.role : null);
                 state.lastLogin = new Date().toISOString();
                 state.preferences = user.preferences || state.preferences;
             })
@@ -338,9 +338,9 @@ const authSlice = createSlice({
                 state.isLoading = false;
                 state.user = action.payload;
                 state.isAuthenticated = true;
-                state.permissions = action.payload.role?.permissions || [];
+                state.permissions = action.payload.role?.permissions || action.payload.permissions || [];
                 state.securityClearance = action.payload.securityClearance;
-                state.role = action.payload.role?.name;
+                state.role = action.payload.role?.name || (typeof action.payload.role === "string" ? action.payload.role : null);
             })
             .addCase(getCurrentUser.rejected, (state, action) => {
                 state.isLoading = false;

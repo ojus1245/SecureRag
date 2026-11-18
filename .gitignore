@@ -136,7 +136,9 @@ desktop.ini
 # ============================================
 # AI Models (large files)
 # ============================================
-models/
+/models/
+ai-service/models/
+!backend/src/models/
 *.pt
 *.pth
 *.bin

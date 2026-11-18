@@ -368,11 +368,15 @@ const Sidebar = ({ open, onClose, collapsed, onCollapse }) => {
                     </Box>
 
                     {user?.securityClearance && (
-                        <Tooltip title={`Clearance: ${user.securityClearance}`}>
+                        <Tooltip title={
+                            user.securityClearance === 'restricted'
+                                ? 'Security Clearance: Top Tier (Restricted - Full Access to all data)'
+                                : `Clearance: ${user.securityClearance}`
+                        }>
                             <Chip
-                                icon={user.securityClearance === 'restricted' ? <LockIcon /> : <LockOpenIcon />}
+                                icon={<ShieldIcon />}
                                 size="small"
-                                color={user.securityClearance === 'restricted' ? 'error' : 'success'}
+                                color="success"
                                 variant="outlined"
                             />
                         </Tooltip>

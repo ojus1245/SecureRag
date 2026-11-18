@@ -107,10 +107,17 @@ class RAGService {
   /**
    * Retrieve relevant documents for query
    */
-  async retrieveRelevantDocuments(query, userId, maxResults = 5) {
+  async retrieveRelevantDocuments(query, userId, maxResults = 5, specificDocumentId = null) {
     try {
       // Get user's accessible documents
-      const accessibleDocuments = await this.getAccessibleDocuments(userId);
+      let accessibleDocuments = await this.getAccessibleDocuments(userId);
+
+      // If specific document was requested (e.g. Chat with Document), restrict strictly to that document
+      if (specificDocumentId) {
+        accessibleDocuments = accessibleDocuments.filter(
+          doc => doc._id.toString() === specificDocumentId.toString()
+        );
+      }
 
       if (accessibleDocuments.length === 0) {
         return {
@@ -120,11 +127,13 @@ class RAGService {
       }
 
       // Call AI service for retrieval
+      const targetIds = accessibleDocuments.map(doc => doc._id.toString());
       const response = await axios.post(
         `${this.aiServiceUrl}/rag/retrieve`,
         {
           query,
-          documentIds: accessibleDocuments.map(doc => doc._id.toString()),
+          document_ids: targetIds,
+          documentIds: targetIds,
           maxResults,
           userId: userId.toString()
         },

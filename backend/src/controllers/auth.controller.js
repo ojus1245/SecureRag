@@ -184,7 +184,7 @@ class AuthController {
             fullName: user.fullName,
             department: user.department,
             securityClearance: user.securityClearance,
-            role: user.role.name,
+            role: user.role,
             permissions: user.role.permissions
           },
           token,

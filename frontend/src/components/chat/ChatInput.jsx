@@ -227,11 +227,11 @@ const ChatInput = forwardRef(({
 
         {/* Security badge */}
         {showSecurityBadge && user?.securityClearance && (
-          <Tooltip title={`Security clearance: ${user.securityClearance}`}>
+          <Tooltip title={`Security Clearance: ${user.securityClearance.toUpperCase()} (Highest Access Tier)`}>
             <SecurityIcon
               sx={{
                 alignSelf: 'center',
-                color: user.securityClearance === 'restricted' ? 'error.main' : 'success.main',
+                color: 'success.main',
                 fontSize: 20
               }}
             />
