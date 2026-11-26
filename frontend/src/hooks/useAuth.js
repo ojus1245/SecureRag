@@ -23,6 +23,7 @@ import {
     clearAuth,
     clearError
 } from '../store/authSlice';
+import { resetChat, clearMessages } from '../store/chatSlice';
 import { authService } from '../services/authService';
 import { logger } from '../utils/logger';
 
@@ -134,10 +135,11 @@ export const useAuth = () => {
         } catch (error) {
             logger.warn('Logout API call failed:', error);
         } finally {
-            // Always clear local storage
+            // Always clear local storage and active session state
             authService.clearTokens();
             authService.clearUser();
             dispatch(clearAuth());
+            dispatch(resetChat());
             navigate('/login');
         }
     }, [dispatch, navigate]);

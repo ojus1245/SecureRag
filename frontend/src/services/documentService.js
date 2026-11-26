@@ -449,6 +449,8 @@ class DocumentService {
                     return new Error(data.message || 'Access denied');
                 case 404:
                     return new Error(data.message || 'Document not found');
+                case 409:
+                    return new Error(data.message || 'Document already exists in the system');
                 case 413:
                     return new Error('File too large. Maximum size is 10MB.');
                 case 429:

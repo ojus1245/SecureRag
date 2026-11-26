@@ -13,7 +13,7 @@ const documentSchema = new mongoose.Schema(
     contentHash: {
       type: String,
       required: true,
-      unique: true
+      index: true
     },
     encryptedContent: {
       type: String,

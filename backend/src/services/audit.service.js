@@ -32,6 +32,13 @@ class AuditService {
   }
 
   /**
+   * Log general event (alias for createLog to support logEvent calls)
+   */
+  async logEvent(logData) {
+    return this.createLog(logData);
+  }
+
+  /**
    * Log security event
    */
   async logSecurityEvent(eventData) {

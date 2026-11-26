@@ -4,6 +4,7 @@ RAG Orchestrator - Main coordination service for RAG operations
 
 import logging
 from typing import Dict, Any, List, Optional, Tuple
+from datetime import datetime
 import asyncio
 import json
 

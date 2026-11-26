@@ -32,7 +32,8 @@ import {
     DialogActions,
     Tabs,
     Tab,
-    Stack
+    Stack,
+    InputAdornment
 } from '@mui/material';
 import {
     Person as PersonIcon,
@@ -51,7 +52,8 @@ import {
     Visibility as VisibilityIcon,
     VisibilityOff as VisibilityOffIcon,
     CheckCircle as CheckCircleIcon,
-    Warning as WarningIcon
+    Warning as WarningIcon,
+    Description as DescriptionIcon
 } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
@@ -81,16 +83,16 @@ const Settings = () => {
 
     // Notification settings
     const [notificationSettings, setNotificationSettings] = useState({
-        emailNotifications: user?.preferences?.emailNotifications ?? true,
-        pushNotifications: user?.preferences?.pushNotifications ?? true,
-        securityAlerts: user?.preferences?.securityAlerts ?? true,
-        documentUpdates: user?.preferences?.documentUpdates ?? true,
-        weeklyDigest: user?.preferences?.weeklyDigest ?? false
+        emailNotifications: Boolean(user?.preferences?.emailNotifications ?? true),
+        pushNotifications: Boolean(user?.preferences?.pushNotifications ?? true),
+        securityAlerts: Boolean(user?.preferences?.securityAlerts ?? true),
+        documentUpdates: Boolean(user?.preferences?.documentUpdates ?? true),
+        weeklyDigest: Boolean(user?.preferences?.weeklyDigest ?? false)
     });
 
     // Security settings
     const [securitySettings, setSecuritySettings] = useState({
-        mfaEnabled: user?.mfaEnabled ?? false,
+        mfaEnabled: Boolean(user?.mfaEnabled ?? false),
         sessionTimeout: 3600,
         showSecurityClearance: true
     });
@@ -582,7 +584,7 @@ const Settings = () => {
                                 value={passwordData.confirmPassword}
                                 onChange={handlePasswordChange('confirmPassword')}
                                 size="small"
-                                error={passwordData.confirmPassword && passwordData.newPassword !== passwordData.confirmPassword}
+                                error={Boolean(passwordData.confirmPassword && passwordData.newPassword !== passwordData.confirmPassword)}
                                 helperText={
                                     passwordData.confirmPassword && passwordData.newPassword !== passwordData.confirmPassword
                                         ? 'Passwords do not match'

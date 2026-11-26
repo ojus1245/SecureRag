@@ -233,7 +233,9 @@ const DocumentUpload = ({ onUploadComplete, onCancel }) => {
             console.error('Response:', error.response?.data);
 
             const errorData = error.response?.data;
-            if (errorData?.errors && Array.isArray(errorData.errors)) {
+            if (error.response?.status === 409 || errorData?.code === 'DOCUMENT_ALREADY_EXISTS') {
+                setError(errorData?.message || error.message || 'Document already exists in the system');
+            } else if (errorData?.errors && Array.isArray(errorData.errors)) {
                 const errorMessages = errorData.errors
                     .map(e => `${e.field || e.param}: ${e.message || e.msg}`)
                     .join(', ');

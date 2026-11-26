@@ -13,17 +13,19 @@ import asyncio
 
 from app.retrieval.scorer import RelevanceScorer
 from app.retrieval.reranker import DocumentReranker
+from app.retrieval.chroma_store import ChromaVectorStore
 
 logger = logging.getLogger(__name__)
 
 
 class DocumentRetriever:
-    """Retrieve relevant documents based on query"""
+    """Retrieve relevant documents based on query using ChromaDB and fallback search"""
 
-    def __init__(self, vector_store=None, persist_path="vector_store.json"):
+    def __init__(self, vector_store=None, persist_path="vector_store.json", chroma_path="./chroma_db"):
         self.persist_path = persist_path
+        self.chroma_store = ChromaVectorStore(persist_directory=chroma_path)
 
-        # Load from provided store, disk, or start empty
+        # Load legacy document metadata store
         if vector_store is not None:
             self.vector_store = vector_store
         elif os.path.exists(persist_path):
@@ -31,6 +33,8 @@ class DocumentRetriever:
                 with open(persist_path, 'r', encoding='utf-8') as f:
                     self.vector_store = json.load(f)
                 logger.info(f"✅ Loaded {len(self.vector_store)} documents from {persist_path}")
+                # Sync existing legacy documents to ChromaDB if needed
+                self._sync_to_chroma()
             except Exception as e:
                 logger.warning(f"Failed to load vector store from disk: {e}")
                 self.vector_store = {}
@@ -45,6 +49,20 @@ class DocumentRetriever:
         self.cache_size = 100
         self.default_top_k = 5
         self.similarity_threshold = 0.0
+
+    def _sync_to_chroma(self):
+        """Ensure all stored documents have their chunks in ChromaDB"""
+        try:
+            if self.chroma_store.count() == 0 and self.vector_store:
+                logger.info("Syncing legacy documents into ChromaDB chunks...")
+                for doc_id, doc in self.vector_store.items():
+                    content = doc.get("content", "")
+                    meta = doc.get("metadata", {})
+                    if content:
+                        self.chroma_store.add_document(doc_id, content, meta)
+                logger.info(f"ChromaDB synced. Total chunks: {self.chroma_store.count()}")
+        except Exception as e:
+            logger.warning(f"ChromaDB initial sync warning: {e}")
 
     def _persist_vector_store(self):
         """Save vector store to disk"""
@@ -66,10 +84,8 @@ class DocumentRetriever:
                        filters: Optional[Dict[str, Any]] = None,
                        use_reranking: bool = False) -> Dict[str, Any]:
         """
-        Retrieve relevant documents for query.
-
-        Uses keyword-based scoring since embeddings are encrypted
-        and cannot be compared with vector similarity.
+        Retrieve relevant document chunks using ChromaDB vector search
+        with fallback to keyword scoring.
         """
         try:
             start_time = datetime.now()
@@ -80,21 +96,71 @@ class DocumentRetriever:
             if cached_result:
                 return cached_result
 
-            # Get candidate documents
+            # 1. Try high-precision ChromaDB vector search across chunks
+            chroma_chunks = []
+            try:
+                dept_filter = filters.get("department") if filters else None
+                class_filter = filters.get("classification") if filters else None
+                chroma_chunks = self.chroma_store.query_chunks(
+                    query=query,
+                    n_results=top_k * 2,
+                    allowed_document_ids=document_ids,
+                    department=dept_filter,
+                    classification=class_filter
+                )
+            except Exception as ce:
+                logger.warning(f"ChromaDB search failed, will use fallback: {ce}")
+
+            # If Chroma returned matches, construct document responses
+            if chroma_chunks:
+                # Group/rank documents based on highest scoring chunks
+                top_documents = []
+                seen_doc_ids = set()
+                for chunk in chroma_chunks:
+                    doc_id = chunk.get("documentId")
+                    if doc_id and doc_id not in seen_doc_ids:
+                        seen_doc_ids.add(doc_id)
+                        top_documents.append({
+                            "documentId": doc_id,
+                            "document_id": doc_id,
+                            "title": chunk.get("title", "Untitled"),
+                            "classification": chunk.get("classification", "internal"),
+                            "department": chunk.get("department", ""),
+                            "score": chunk.get("score", 0.8),
+                            "relevanceScore": chunk.get("score", 0.8),
+                            "snippet": chunk.get("snippet", ""),
+                            "content": chunk.get("content", ""),
+                            "chunkIndex": chunk.get("chunkIndex", 0),
+                            "metadata": chunk.get("metadata", {})
+                        })
+                    if len(top_documents) >= top_k:
+                        break
+
+                result = {
+                    "success": True,
+                    "query": query,
+                    "documents": top_documents,
+                    "total_candidates": len(chroma_chunks),
+                    "total_retrieved": len(top_documents),
+                    "retrieval_time": (datetime.now() - start_time).total_seconds(),
+                    "method": "chromadb_vector",
+                    "reranking": None,
+                    "timestamp": datetime.now().isoformat(),
+                    "error": None,
+                    "message": None
+                }
+                self._add_to_cache(cache_key, result)
+                return result
+
+            # 2. Fallback to keyword matching if Chroma was empty
             candidates = await self._get_candidates(document_ids, filters)
             if not candidates:
                 return self._empty_result(query, "No candidate documents found")
 
-            # Score by keyword matching
             scored_documents = self._keyword_score_documents(query, candidates)
-
-            # Sort descending by score
             scored_documents.sort(key=lambda d: d.get("score", 0), reverse=True)
-
-            # Take top_k
             top_documents = scored_documents[:top_k]
 
-            # Prepare result
             result = {
                 "success": True,
                 "query": query,
@@ -102,16 +168,14 @@ class DocumentRetriever:
                 "total_candidates": len(candidates),
                 "total_retrieved": len(top_documents),
                 "retrieval_time": (datetime.now() - start_time).total_seconds(),
-                "method": "keyword",
+                "method": "keyword_fallback",
                 "reranking": None,
                 "timestamp": datetime.now().isoformat(),
                 "error": None,
                 "message": None
             }
 
-            # Cache result
             self._add_to_cache(cache_key, result)
-
             return result
 
         except Exception as e:

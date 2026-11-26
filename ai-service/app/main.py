@@ -251,18 +251,26 @@ async def add_rag_document(request: Dict[str, Any]):
                 "vectorId": vector_id,
                 "encryptedEmbedding": encrypted_embedding,
                 "embeddingKeyId": embedding_key_id,
-                "content": content,             # FIX 2: store content
+                "content": content,             # store content
                 "metadata": metadata
             }
 
-            # FIX 1: persist to disk so it survives restarts
+            # Persist legacy store
             if hasattr(retriever, '_persist_vector_store'):
                 retriever._persist_vector_store()
+
+        # Add & chunk into ChromaDB
+        chunk_count = 0
+        if hasattr(retriever, 'chroma_store') and retriever.chroma_store:
+            try:
+                chunk_count = retriever.chroma_store.add_document(document_id, content, metadata)
+            except Exception as ce:
+                logger.error(f"Failed to add document to ChromaDB: {ce}")
 
         logger.info(
             f"Document added to RAG: {document_id} | "
             f"Title: {metadata.get('title')} | "
-            f"Content length: {len(content)}"
+            f"Chunks in ChromaDB: {chunk_count}"
         )
         return {
             "success": True,
@@ -309,6 +317,12 @@ async def delete_rag_document(document_id: str):
             # Persist after deletion too
             if hasattr(retriever, '_persist_vector_store'):
                 retriever._persist_vector_store()
+
+        if hasattr(retriever, 'chroma_store') and retriever.chroma_store:
+            try:
+                retriever.chroma_store.delete_document(document_id)
+            except Exception as ce:
+                logger.warning(f"Could not delete from ChromaDB: {ce}")
 
         logger.info(f"Document removed from RAG: {document_id}")
         return {

@@ -16,6 +16,7 @@ import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { store } from './store';
 import { getCurrentUser, selectIsAuthenticated, clearAuth } from './store/authSlice';
+import { resetChat } from './store/chatSlice';
 import { authService } from './services/authService';
 import { lightTheme, darkTheme } from './themes';
 import { useTheme } from './hooks/useTheme';
@@ -158,6 +159,7 @@ const AppContent = () => {
   useEffect(() => {
     const unsubscribeAuth = eventBus.on('auth:logout', () => {
       dispatch(clearAuth());
+      dispatch(resetChat());
       authService.clearTokens();
       authService.clearUser();
       navigate('/login');

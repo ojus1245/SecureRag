@@ -45,6 +45,7 @@ import {
 import AuditDashboard from '../components/admin/AuditDashboard';
 import UserManagement from '../components/admin/UserManagement';
 import RoleManagement from '../components/admin/RoleManagement';
+import Settings from './Settings';
 import { adminService } from '../services/adminService';
 import { useAuth } from '../hooks/useAuth';
 import { formatNumber } from '../utils/helpers';
@@ -59,6 +60,22 @@ const AdminDashboard = () => {
     const [error, setError] = useState(null);
     const [stats, setStats] = useState(null);
     const [refreshKey, setRefreshKey] = useState(0);
+
+    // Sync tab with URL route if directly accessed via /admin/users, /admin/roles, /admin/settings, /admin/audit
+    useEffect(() => {
+        const path = location.pathname;
+        if (path === '/admin/users') {
+            setActiveTab(2);
+        } else if (path === '/admin/roles') {
+            setActiveTab(3);
+        } else if (path === '/admin/audit') {
+            setActiveTab(1);
+        } else if (path === '/admin/settings') {
+            setActiveTab(4);
+        } else if (path === '/admin') {
+            setActiveTab(0);
+        }
+    }, [location.pathname]);
 
     useEffect(() => {
         fetchStats();
@@ -81,6 +98,10 @@ const AdminDashboard = () => {
 
     const handleTabChange = (event, newValue) => {
         setActiveTab(newValue);
+        const tabRoutes = ['/admin', '/admin/audit', '/admin/users', '/admin/roles', '/admin/settings'];
+        if (tabRoutes[newValue] && location.pathname !== tabRoutes[newValue]) {
+            navigate(tabRoutes[newValue], { replace: true });
+        }
     };
 
     const handleRefresh = () => {
@@ -280,7 +301,10 @@ const AdminDashboard = () => {
                                                 fullWidth
                                                 variant="outlined"
                                                 startIcon={<AddIcon />}
-                                                onClick={() => setActiveTab(2)}
+                                                onClick={() => {
+                                                    setActiveTab(2);
+                                                    navigate('/admin/users');
+                                                }}
                                             >
                                                 Add User
                                             </Button>
@@ -293,7 +317,10 @@ const AdminDashboard = () => {
                                                 fullWidth
                                                 variant="outlined"
                                                 startIcon={<SecurityIcon />}
-                                                onClick={() => setActiveTab(3)}
+                                                onClick={() => {
+                                                    setActiveTab(3);
+                                                    navigate('/admin/roles');
+                                                }}
                                             >
                                                 Manage Roles
                                             </Button>
@@ -306,7 +333,10 @@ const AdminDashboard = () => {
                                                 fullWidth
                                                 variant="outlined"
                                                 startIcon={<AssessmentIcon />}
-                                                onClick={() => setActiveTab(1)}
+                                                onClick={() => {
+                                                    setActiveTab(1);
+                                                    navigate('/admin/audit');
+                                                }}
                                             >
                                                 View Audit Logs
                                             </Button>
@@ -319,7 +349,10 @@ const AdminDashboard = () => {
                                                 fullWidth
                                                 variant="outlined"
                                                 startIcon={<SettingsIcon />}
-                                                onClick={() => setActiveTab(4)}
+                                                onClick={() => {
+                                                    setActiveTab(4);
+                                                    navigate('/admin/settings');
+                                                }}
                                             >
                                                 System Settings
                                             </Button>

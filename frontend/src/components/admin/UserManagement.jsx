@@ -95,11 +95,16 @@ const UserManagement = () => {
                 search: searchTerm
             });
 
-            setUsers(result.users);
-            setTotalUsers(result.total);
+            // Handle both { data: { users, pagination } } and { users, total }
+            const usersData = result?.data?.users || result?.users || [];
+            const totalCount = result?.data?.pagination?.total ?? result?.total ?? usersData.length;
+
+            setUsers(Array.isArray(usersData) ? usersData : []);
+            setTotalUsers(totalCount);
         } catch (error) {
             console.error('Failed to fetch users:', error);
             setError('Failed to load users');
+            setUsers([]);
         } finally {
             setLoading(false);
         }
@@ -153,8 +158,9 @@ const UserManagement = () => {
 
     const handleSave = async () => {
         try {
+            const editId = editingUser?.id || editingUser?._id;
             if (editingUser) {
-                await userService.updateUser(editingUser.id, formData);
+                await userService.updateUser(editId, formData);
                 setSuccess('User updated successfully');
             } else {
                 await userService.createUser({
@@ -171,7 +177,7 @@ const UserManagement = () => {
             await auditService.logEvent({
                 action: editingUser ? 'USER_UPDATE' : 'USER_CREATE',
                 resourceType: 'user',
-                resourceId: editingUser?.id,
+                resourceId: editId,
                 details: {
                     username: formData.username,
                     department: formData.department,
@@ -197,7 +203,8 @@ const UserManagement = () => {
 
     const handleDelete = async () => {
         try {
-            await userService.deleteUser(deletingUser.id);
+            const delId = deletingUser?.id || deletingUser?._id;
+            await userService.deleteUser(delId);
             setSuccess('User deactivated successfully');
             setDeleteDialogOpen(false);
             fetchUsers();
@@ -206,9 +213,9 @@ const UserManagement = () => {
             await auditService.logEvent({
                 action: 'USER_DELETE',
                 resourceType: 'user',
-                resourceId: deletingUser.id,
+                resourceId: delId,
                 details: {
-                    username: deletingUser.username
+                    username: deletingUser?.username
                 },
                 status: 'success'
             });
@@ -220,7 +227,8 @@ const UserManagement = () => {
 
     const handleToggleActive = async (user) => {
         try {
-            await userService.updateUser(user.id, {
+            const toggleId = user.id || user._id;
+            await userService.updateUser(toggleId, {
                 ...user,
                 isActive: !user.isActive
             });
@@ -314,99 +322,110 @@ const UserManagement = () => {
                         </TableHead>
 
                         <TableBody>
-                            {users.map((user) => (
-                                <TableRow key={user.id} hover>
-                                    <TableCell>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            <Avatar sx={{ width: 32, height: 32 }}>
-                                                {user.fullName?.[0]?.toUpperCase() || user.username?.[0]?.toUpperCase()}
-                                            </Avatar>
-                                            <Box>
-                                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                                    {user.fullName || user.username}
+                            {users && users.length > 0 ? (
+                                users.map((user) => {
+                                    const userId = user.id || user._id;
+                                    return (
+                                        <TableRow key={userId} hover>
+                                            <TableCell>
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    <Avatar sx={{ width: 32, height: 32 }}>
+                                                        {user.fullName?.[0]?.toUpperCase() || user.username?.[0]?.toUpperCase()}
+                                                    </Avatar>
+                                                    <Box>
+                                                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                                            {user.fullName || user.username}
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            {user.email}
+                                                        </Typography>
+                                                    </Box>
+                                                </Box>
+                                            </TableCell>
+
+                                            <TableCell>
+                                                <Typography variant="body2">
+                                                    {user.department || 'N/A'}
                                                 </Typography>
-                                                <Typography variant="caption" color="text.secondary">
-                                                    {user.email}
+                                            </TableCell>
+
+                                            <TableCell>
+                                                <Chip
+                                                    label={user.role?.name || (typeof user.role === 'string' ? user.role : 'viewer')}
+                                                    size="small"
+                                                    color={user.role?.name === 'admin' || user.role === 'admin' ? 'primary' : 'default'}
+                                                    variant="outlined"
+                                                />
+                                            </TableCell>
+
+                                            <TableCell>
+                                                <Chip
+                                                    label={user.securityClearance || 'internal'}
+                                                    size="small"
+                                                    color={
+                                                        user.securityClearance === 'restricted' ? 'error' :
+                                                            user.securityClearance === 'confidential' ? 'warning' :
+                                                                user.securityClearance === 'internal' ? 'info' : 'success'
+                                                    }
+                                                    variant="outlined"
+                                                />
+                                            </TableCell>
+
+                                            <TableCell>
+                                                <Chip
+                                                    icon={user.isActive ? <CheckCircleIcon /> : <CancelIcon />}
+                                                    label={user.isActive ? 'Active' : 'Inactive'}
+                                                    size="small"
+                                                    color={user.isActive ? 'success' : 'error'}
+                                                />
+                                            </TableCell>
+
+                                            <TableCell>
+                                                <Typography variant="body2">
+                                                    {user.lastLogin ? new Date(user.lastLogin).toLocaleDateString() : 'Never'}
                                                 </Typography>
-                                            </Box>
-                                        </Box>
-                                    </TableCell>
+                                            </TableCell>
 
-                                    <TableCell>
-                                        <Typography variant="body2">
-                                            {user.department}
-                                        </Typography>
-                                    </TableCell>
+                                            <TableCell>
+                                                <Box sx={{ display: 'flex', gap: 0.5 }}>
+                                                    <Tooltip title="Edit">
+                                                        <IconButton size="small" onClick={() => handleOpenDialog(user)}>
+                                                            <EditIcon />
+                                                        </IconButton>
+                                                    </Tooltip>
 
-                                    <TableCell>
-                                        <Chip
-                                            label={user.role?.name || 'viewer'}
-                                            size="small"
-                                            color={user.role?.name === 'admin' ? 'primary' : 'default'}
-                                            variant="outlined"
-                                        />
-                                    </TableCell>
+                                                    <Tooltip title={user.isActive ? 'Deactivate' : 'Activate'}>
+                                                        <IconButton
+                                                            size="small"
+                                                            onClick={() => handleToggleActive(user)}
+                                                            disabled={userId === (currentUser?.id || currentUser?._id)}
+                                                        >
+                                                            {user.isActive ? <BlockIcon /> : <CheckCircleIcon />}
+                                                        </IconButton>
+                                                    </Tooltip>
 
-                                    <TableCell>
-                                        <Chip
-                                            label={user.securityClearance}
-                                            size="small"
-                                            color={
-                                                user.securityClearance === 'restricted' ? 'error' :
-                                                    user.securityClearance === 'confidential' ? 'warning' :
-                                                        user.securityClearance === 'internal' ? 'info' : 'success'
-                                            }
-                                            variant="outlined"
-                                        />
-                                    </TableCell>
-
-                                    <TableCell>
-                                        <Chip
-                                            icon={user.isActive ? <CheckCircleIcon /> : <CancelIcon />}
-                                            label={user.isActive ? 'Active' : 'Inactive'}
-                                            size="small"
-                                            color={user.isActive ? 'success' : 'error'}
-                                        />
-                                    </TableCell>
-
-                                    <TableCell>
-                                        <Typography variant="body2">
-                                            {user.lastLogin ? new Date(user.lastLogin).toLocaleDateString() : 'Never'}
-                                        </Typography>
-                                    </TableCell>
-
-                                    <TableCell>
-                                        <Box sx={{ display: 'flex', gap: 0.5 }}>
-                                            <Tooltip title="Edit">
-                                                <IconButton size="small" onClick={() => handleOpenDialog(user)}>
-                                                    <EditIcon />
-                                                </IconButton>
-                                            </Tooltip>
-
-                                            <Tooltip title={user.isActive ? 'Deactivate' : 'Activate'}>
-                                                <IconButton
-                                                    size="small"
-                                                    onClick={() => handleToggleActive(user)}
-                                                    disabled={user.id === currentUser?.id}
-                                                >
-                                                    {user.isActive ? <BlockIcon /> : <CheckCircleIcon />}
-                                                </IconButton>
-                                            </Tooltip>
-
-                                            <Tooltip title="Delete">
-                                                <IconButton
-                                                    size="small"
-                                                    color="error"
-                                                    onClick={() => handleOpenDeleteDialog(user)}
-                                                    disabled={user.id === currentUser?.id}
-                                                >
-                                                    <DeleteIcon />
-                                                </IconButton>
-                                            </Tooltip>
-                                        </Box>
+                                                    <Tooltip title="Delete">
+                                                        <IconButton
+                                                            size="small"
+                                                            color="error"
+                                                            onClick={() => handleOpenDeleteDialog(user)}
+                                                            disabled={userId === (currentUser?.id || currentUser?._id)}
+                                                        >
+                                                            <DeleteIcon />
+                                                        </IconButton>
+                                                    </Tooltip>
+                                                </Box>
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })
+                            ) : (
+                                <TableRow>
+                                    <TableCell colSpan={7} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                                        {loading ? 'Loading users...' : 'No users found'}
                                     </TableCell>
                                 </TableRow>
-                            ))}
+                            )}
                         </TableBody>
                     </Table>
                 </TableContainer>

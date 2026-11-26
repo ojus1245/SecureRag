@@ -76,8 +76,10 @@ const Chat = () => {
     }, [selectedConversation, location.state]);
 
     useEffect(() => {
+        // Reset local conversation list and load user-specific conversations
+        setSelectedConversation(conversationId || null);
         fetchConversations();
-    }, []);
+    }, [user?.id, user?._id]);
 
     useEffect(() => {
         if (conversationId) {

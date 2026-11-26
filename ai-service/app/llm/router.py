@@ -3,6 +3,7 @@ LLM Router for intelligent model selection and routing
 """
 
 import logging
+import os
 from typing import Dict, Any, List, Optional, AsyncGenerator
 from datetime import datetime
 import asyncio
@@ -39,10 +40,11 @@ class LLMRouter:
         }
 
         # ============================================
-        # SWITCHED TO GEMINI (external) AS PRIMARY
-        # Change back to "local_first" to use Ollama
+        # ROUTING POLICY
+        # "external_only" disables all Ollama local calls
+        # and routes 100% of generation directly to Gemini
         # ============================================
-        self.default_rule = "external_first"
+        self.default_rule = os.getenv("ROUTING_RULE", "external_only")
 
         self.stats = {
             "total_requests": 0,
@@ -306,13 +308,17 @@ class LLMRouter:
                      options: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
         prompt = self._build_rag_prompt(query, documents)
         try:
-            health = await self.ollama_client.check_health()
-            if health["status"] == "healthy":
-                async for chunk in self.ollama_client.generate_stream(prompt, options=options):
-                    yield chunk
-            else:
+            if self.default_rule == "external_only":
                 async for chunk in self.external_client.generate_stream(prompt, options=options):
                     yield chunk
+            else:
+                health = await self.ollama_client.check_health()
+                if health["status"] == "healthy":
+                    async for chunk in self.ollama_client.generate_stream(prompt, options=options):
+                        yield chunk
+                else:
+                    async for chunk in self.external_client.generate_stream(prompt, options=options):
+                        yield chunk
         except Exception as e:
             logger.error(f"Streaming routing failed: {str(e)}", exc_info=True)
             yield f"Error: {str(e)}"

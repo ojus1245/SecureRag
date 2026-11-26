@@ -89,7 +89,15 @@ class DocumentController {
               fileType = ext.replace('.', '');
               console.log(`Extracted ${extractedText.length} chars from Word doc via mammoth: ${req.file.originalname}`);
             } catch (docErr) {
-              console.error('Word extraction error:', docErr.message);
+              console.warn('Mammoth extraction failed (e.g. legacy binary .doc format):', docErr.message);
+              // Fallback for legacy binary .doc or plain text wrapped in .doc: extract ASCII printable sequences
+              const cleanStr = rawBuf.toString('binary').replace(/[^\x20-\x7E\t\r\n]+/g, ' ');
+              const cleaned = cleanStr.replace(/\s+/g, ' ').trim();
+              if (cleaned.length > 50) {
+                extractedText = cleaned;
+                fileType = ext.replace('.', '');
+                console.log(`Recovered ${extractedText.length} chars from binary doc fallback: ${req.file.originalname}`);
+              }
             }
           }
 
@@ -133,6 +141,33 @@ class DocumentController {
         return res.status(403).json({
           success: false,
           message: 'Insufficient clearance to upload document at this classification level'
+        });
+      }
+
+      // Check for duplicate document (by title or content hash)
+      const contentHash = documentService.generateContentHash(content);
+      const existingDoc = await Document.findOne({
+        $or: [
+          { contentHash },
+          { title: { $regex: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }
+        ]
+      });
+
+      if (existingDoc) {
+        const isSameContent = existingDoc.contentHash === contentHash;
+        const msg = isSameContent
+          ? `Document already exists with identical content (Title: "${existingDoc.title}")`
+          : `A document with the title "${title}" already exists in the system`;
+        logger.warn(`Duplicate document upload blocked: ${msg}`);
+        return res.status(409).json({
+          success: false,
+          code: 'DOCUMENT_ALREADY_EXISTS',
+          message: msg,
+          existingDocument: {
+            id: existingDoc._id,
+            title: existingDoc.title,
+            classification: existingDoc.classification
+          }
         });
       }
 
